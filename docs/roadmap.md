@@ -42,7 +42,7 @@
 
 设计验收清单见 [`acceptance.md`](acceptance.md)。
 
-性能不回退和 AG99 迁移要求记录在 [`ADR-0002-run-generation-and-performance.md`](decisions/ADR-0002-run-generation-and-performance.md) 中。
+运行代际和热路径约束记录在 [`ADR-0002-run-generation-and-performance.md`](decisions/ADR-0002-run-generation-and-performance.md) 中；最小 Kernel 与外部适配层的边界记录在 [`ADR-0003-minimal-kernel-and-adapters.md`](decisions/ADR-0003-minimal-kernel-and-adapters.md) 中。
 
 ## 实现阶段
 
