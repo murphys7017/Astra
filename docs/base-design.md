@@ -1,8 +1,8 @@
 # Astra 底座设计基线
 
 **状态**：已决定的设计基线，待实现验证  
-**版本**：Base Design 0.1  
-**日期**：2026-11-05  
+**版本**：Base Design 0.2
+**日期**：2026-11-05
 **范围**：单进程、本地 Python Runtime 的概念设计，不冻结具体代码 API
 
 本文把愿景和边界收敛成一套可以进入 RFC 和验收设计的底座模型。它描述责任、关系和不变量，不规定类名、目录结构或序列化格式。
@@ -17,6 +17,30 @@ Astra 底座要解决的是“如何安全地组合和运行能力”，而不�
 - 让 Workflow 自身成为可调用的 Component；
 - 追踪一次执行的父子关系、终态、取消和资源清理；
 - 在权限拒绝、能力缺失、Provider 歧义和迟到结果时安全失败。
+
+底座还必须满足迁移兼容要求：接入现有 AG99 能力后，Astra Runtime 引入的请求路径开销应可测量、可解释，并以不降低现有响应和实时表现为目标。
+
+## 1.1 插件、组件与工作流
+
+Plugin 是组件和工作流的发现、分发与离线载入单位。它不是新的运行时调用原语。
+
+一个 Plugin 可以包含：
+
+- 一个或多个 Component；
+- 一个或多个 Capability；
+- 一个或多个 Workflow；
+- 依赖、配置和权限声明。
+
+Component 是 Runtime 的装载和生命周期单位。Workflow 在运行时可以作为 Workflow Component，对外提供 Capability。Workflow Package 可以作为 Plugin 被载入，但 Runtime 最终仍然通过 Component 和 Capability 工作。
+
+```text
+Plugin Package
+    → Component / Workflow Component
+    → Capability Registry
+    → Workflow Composition
+```
+
+插件管理、组件注册和消息流程执行是三个相互连接但职责不同的层次。插件的安装、发现和启停不能直接决定某条消息的业务流程。
 
 ## 2. 分层模型
 
@@ -98,7 +122,9 @@ Invocation 表示一次明确的 Capability 调用，拥有 `invocation_id`、�
 
 ### Provider Binding
 
-一次 Invocation 开始后，应固定其 Provider Binding。运行期间的 Provider 替换不改变已经开始的调用；新的调用按新的 Scope 规则重新解析。
+一次 Workflow Run 开始后，应固定它使用的 Workflow Definition、Profile Generation 和能力绑定策略。一次 Invocation 开始后，应固定其 Provider Binding。运行期间的 Provider 替换不改变已经开始的调用；新的调用也不能越过当前 Run 的 Generation 使用新的组合。
+
+插件更新、Provider 替换或 Workflow 修改会产生新的 Profile Generation。新 Generation 只服务新的 Run，旧 Generation 进入排空状态，等待现有 Run 结束后再停止和释放。
 
 ## 4. 身份与所有权
 
@@ -233,16 +259,38 @@ Capability 必须声明副作用类别：
 
 Runtime 停止只能清理 Managed Resource，不能假定 External Effect 可以自动撤销。
 
+## 9.1 性能与实时路径
+
+插件发现、Manifest 读取、依赖解析、组件启动和 Profile 重组属于启动或管理路径，不应在每条消息的热路径中重复执行。
+
+同进程的本地调用优先使用已经解析并固定的能力绑定，避免重复扫描 Registry、重复序列化和不必要的跨层消息转换。EventBus 不用于传递每个 Token、音频分块或 Live2D 逐帧数据。
+
+AG99live 的音频播放、动作融合、播放时间线和逐帧参数计算继续由其领域 Runtime 管理。Astra 只在高层能力边界参与，例如表达意图、输出片段、播放请求和生命周期控制。
+
+性能验收至少需要比较：
+
+- 启动和插件载入时间；
+- 消息到首个响应的时间；
+- 首个 Token 或首个音频片段的时间；
+- 完整响应时间和流式间隔；
+- 取消响应时间；
+- CPU、内存和实时播放稳定性。
+
+迁移前后的比较必须使用相同 Provider、输入和配置。Runtime 额外开销应有明确预算，暂定目标为热路径低个位数百分比以内，最终以基线测试结果校准。
+
 ## 10. 第一阶段运行边界
 
 第一阶段只验证：
 
 - 单进程、本地 Python；
+- 本地插件或内置组件的离线发现和载入；
 - 内存中的 Registry、Resolver 和 EventBus；
 - 代码定义的 Workflow；
+- Workflow 作为 Workflow Component 对外提供 Capability；
 - 两个 Provider 提供同一 Capability；
 - Invoke、Stream、Route、Event 和 Control 的最小语义；
-- Scope 清理、父子取消、权限拒绝和迟到结果隔离。
+- Scope 清理、父子取消、权限拒绝和迟到结果隔离；
+- 消息热路径性能基线。
 
 第一阶段暂不设计：
 
@@ -251,6 +299,8 @@ Runtime 停止只能清理 Managed Resource，不能假定 External Effect 可�
 - Workflow DSL、IR 和图形编辑器；
 - Agent、Persona、Memory、Live2D 的具体领域模型；
 - AstrBot 兼容层和完整插件市场。
+
+AG99 迁移采用薄适配策略：先把已有能力包装为 Component 和 Capability，保留现有内部算法、缓存、并发和实时链路，再逐项替换内部实现。底座不要求第一轮迁移重写 AG99 或 AG99live。
 
 ## 11. 底座设计完成标准
 
@@ -262,6 +312,8 @@ Runtime 停止只能清理 Managed Resource，不能假定 External Effect 可�
 4. 公共状态的 Owner 和终态来源可追踪。
 5. 第一阶段范围和暂缓事项已明确。
 6. 后续 RFC 可以直接从本文提取主题，不需要重新讨论项目定位。
+7. 插件载入、Workflow 组合和运行期间绑定不可变的关系已明确。
+8. AG99 迁移的性能不回退要求和测量方法已明确。
 
 本文完成后仍然需要实现验证；“设计完成”不等于“运行时已实现”。
 

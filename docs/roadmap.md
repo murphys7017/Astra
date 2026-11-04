@@ -2,6 +2,8 @@
 
 当前路线先完成设计资料和边界确认，再进入最小运行时实现。每个阶段都要区分“写入文档”“形成候选设计”和“经过验证”。
 
+当前正式执行计划见 [`implementation-plan.md`](implementation-plan.md)。
+
 ## 文档阶段
 
 ### D0：仓库和文档基线
@@ -39,6 +41,8 @@
 重点场景：Provider 替换、缺失能力、歧义解析、父子取消、迟到结果、流失败、事件注销、权限拒绝和资源释放。
 
 设计验收清单见 [`acceptance.md`](acceptance.md)。
+
+性能不回退和 AG99 迁移要求记录在 [`ADR-0002-run-generation-and-performance.md`](decisions/ADR-0002-run-generation-and-performance.md) 中。
 
 ## 实现阶段
 

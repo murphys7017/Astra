@@ -22,6 +22,7 @@ Astra 是一个以 Component 和 Capability 为基础的可组合智能系统运
 - [设计边界](docs/boundaries.md)：内核、组件、能力、工作流和事件的责任边界。
 - [底座设计基线](docs/base-design.md)：核心对象、执行语义、生命周期、权限和第一阶段范围。
 - [设计验收表](docs/acceptance.md)：进入实现阶段前需要满足的设计条件。
+- [底座实施计划](docs/implementation-plan.md)：从 Runtime、插件和 Workflow 到 AG99 适配的阶段计划。
 - [核心术语](docs/terms.md)：当前统一词汇及其关系。
 - [文档规划与路线](docs/roadmap.md)：文档阶段、验证阶段和暂缓事项。
 - [架构决策](docs/decisions/ADR-0001-document-first.md)：为什么先做文档和边界设计。
