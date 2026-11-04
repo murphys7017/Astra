@@ -14,6 +14,7 @@ from astra import (
     MemoryLogSink,
     PermissionDeniedError,
     PluginLoader,
+    PluginDependencyError,
     Runtime,
     RuntimeConfig,
     SensitiveConfigurationError,
@@ -72,6 +73,12 @@ class ConfigAndPluginTests(unittest.TestCase):
             RuntimeConfig.from_dict({"schema_version": True})
         with self.assertRaises(ConfigurationError):
             RuntimeConfig.from_dict({"workflows": [{"name": "same"}, {"name": "same", "enabled": False}]})
+        with self.assertRaises(SensitiveConfigurationError):
+            RuntimeConfig.from_dict({"permissions": {"secrets": {"api_key": "raw"}}})
+        inline = RuntimeConfig.from_dict(
+            {"secrets": {"api_key": {"value": "TOP-SECRET", "protected": True}}}
+        )
+        self.assertNotIn("TOP-SECRET", repr(inline))
 
     def test_disabled_child_workflow_cannot_bypass_config(self):
         async def scenario():
@@ -111,6 +118,27 @@ class ConfigAndPluginTests(unittest.TestCase):
             await runtime.start()
             with self.assertRaises(PermissionDeniedError):
                 await runtime.run_workflow("protected-workflow", None)
+            self.assertEqual(called, [])
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_permissioned_capability_is_denied_without_an_allow_list(self):
+        async def scenario():
+            called = []
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_component(
+                FunctionComponent(
+                    "protected",
+                    {"read": lambda request, inv: called.append(True)},
+                    capabilities={"read": CapabilitySpec("read", permissions={"filesystem.read"})},
+                )
+            )
+            workflow = SerialWorkflow("protected-default-deny", [lambda context, value: context.invoke("read", value)])
+            runtime.register_workflow(workflow)
+            await runtime.start()
+            with self.assertRaises(PermissionDeniedError):
+                await runtime.run_workflow(workflow, None)
             self.assertEqual(called, [])
             await runtime.stop()
 
@@ -182,6 +210,28 @@ class ConfigAndPluginTests(unittest.TestCase):
             with self.assertRaises(ComponentLifecycleError):
                 PluginLoader(root).load_selected(runtime, ["broken"])
             self.assertNotIn("new", runtime._components)
+
+    def test_plugin_dependency_version_constraint_is_checked(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for plugin_id, manifest in (
+                ("base", {"id": "base", "version": "2", "entrypoint": "plugin.py:create_components"}),
+                (
+                    "child",
+                    {
+                        "id": "child",
+                        "version": "1",
+                        "entrypoint": "plugin.py:create_components",
+                        "dependencies": [{"id": "base", "version": "1"}],
+                    },
+                ),
+            ):
+                plugin_dir = root / plugin_id
+                plugin_dir.mkdir()
+                (plugin_dir / "astra.plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            with self.assertRaises(PluginDependencyError):
+                PluginLoader(root).load_selected(runtime, ["child"])
 
 
 if __name__ == "__main__":

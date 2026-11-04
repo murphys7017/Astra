@@ -4,7 +4,12 @@ import argparse
 import asyncio
 import json
 from statistics import mean
+from pathlib import Path
+import sys
 import time
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from astra import FunctionComponent, MemoryLogSink, Runtime, SerialWorkflow, StructuredLogger
 

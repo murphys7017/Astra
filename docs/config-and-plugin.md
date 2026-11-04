@@ -19,7 +19,7 @@ RuntimeConfig 接受一个 JSON 对象，当前支持：
 
 JSON 只选择当前组合和参数，不定义组件内部行为，也不取代 Python Workflow 的执行语义。Runtime 在启动前校验组件、Workflow、绑定和组合引用，并生成不可变 Composition Snapshot。当前 `composition.order`、`parallel` 和 `branches` 是经过校验的编排声明，供后续组合引擎使用；它们不会在本阶段静默变成另一套 JSON Workflow DSL。
 
-如果 Capability 声明了权限，配置可以用 `permissions.allow` 提供允许集合。调用前由 Runtime 检查，缺少权限时 Provider 不会执行。
+如果 Capability 声明了权限，配置可以用 `permissions.allow` 提供允许集合。调用前由 Runtime 检查，缺少权限时 Provider 不会执行；没有显式允许集合时，带权限的 Capability 默认拒绝。
 
 密钥只能使用以下两种形式：
 
@@ -53,11 +53,11 @@ plugins/
   "version": "1",
   "entrypoint": "plugin.py:create_components",
   "components": ["echo.provider"],
-  "dependencies": []
+  "dependencies": [{"id": "base", "version": "1"}]
 }
 ```
 
-入口工厂返回一个 Component 或 Component 可迭代对象。PluginLoader 会先发现并校验 Manifest，再按依赖排序载入；组件注册发生在 Runtime 启动前，任何冲突都会回滚本次 Runtime 注册表批次。由于插件是可信进程内代码，模块导入或工厂执行产生的外部副作用无法被运行时回滚。
+入口工厂返回一个 Component 或 Component 可迭代对象。PluginLoader 会先发现并校验 Manifest，再按依赖和精确版本约束排序载入；组件注册发生在 Runtime 启动前，任何冲突都会回滚本次 Runtime 注册表批次。由于插件是可信进程内代码，模块导入或工厂执行产生的外部副作用无法被运行时回滚。
 
 当前不支持在线安装、包管理、沙箱、跨进程隔离、不可信代码执行和热加载。插件停止时由 Runtime 统一执行 Component 的停止和释放。
 

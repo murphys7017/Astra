@@ -1,6 +1,6 @@
 # Astra 实现状态
 
-**状态**：Stage 4 首轮实现进行中
+**状态**：最小底座首轮闭环已实现，进入硬化验证
 **日期**：2026-11-05
 
 ## 已实现
@@ -23,8 +23,12 @@
 - JSON 选择启用组件、Workflow 和 Capability Provider Binding。
 - 并行 Workflow 的结果汇合；
 - Scope 绑定的内存 EventBus 和事件触发 Workflow；
+- 有序异步 Stream、生产者取消和单一终态；
+- Pipeline Workflow 的有序数据传递；
 - Provider 执行前的最小权限检查。
-- 可重复的本地直接调用与 Workflow/Capability 调用性能基线脚本。
+- Capability 声明与实际处理器的一致性校验；
+- 可重复的本地直接调用与 Workflow/Capability 调用性能基线脚本；
+- 非阻塞日志 Sink、事件 payload 冻结和取消/资源释放诊断。
 
 插件回滚当前只覆盖 Runtime 注册表；由于插件在进程内执行，导入或工厂副作用仍要求插件自身保持可控。
 
@@ -34,20 +38,21 @@
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m compileall -q astra tests
+pytest -q
+python -m compileall -q astra tests tools
+python -m tools.benchmark_runtime --iterations 1000
 ```
 
-当前测试覆盖组件生命周期、Capability 歧义绑定、串行和路由 Workflow、子 Workflow、Workflow Component、日志故障隔离、敏感字段脱敏、超时收束、JSON 配置和临时本地插件加载。
+当前测试包含 24 个用例，覆盖组件生命周期、Capability 契约归一化、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置、默认拒绝权限、事件订阅和临时本地插件加载。
 
 ## 尚未实现
 
 以下内容按开发计划保留在后续阶段：
 
-- Stream、Pipeline 和更完整的 Control 语义；
 - JSON 组合声明到实际图执行的组合引擎；当前由显式 Python Workflow 执行；
 - Runtime 运行中的配置热更新、Generation 切换和旧组合排空；
 - 资源限制、背压和更完整的故障策略；
-- 性能基线和热路径测量；
+- 性能预算阈值和持续回归门禁；
 - 外部模块自动适配。
 
 当前代码没有引入具体模型、平台、设备或外部项目兼容逻辑。

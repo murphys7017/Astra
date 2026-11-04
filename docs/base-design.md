@@ -288,7 +288,7 @@ Runtime 额外开销应有明确预算，第一阶段只要求能够单独测量
 - 代码定义的 Workflow，以及用于选择组合和参数的最小 JSON 运行配置；
 - Workflow 作为 Workflow Component 对外提供 Capability；
 - 两个 Provider 提供同一 Capability；
-- Invoke、Stream、Route、Event 和 Control 的最小语义；
+- Invoke、Stream、Route、Event 和取消/停止等最小控制语义；
 - Scope 清理、父子取消、权限拒绝和迟到结果隔离；
 - 基本执行路径的可测量性。
 

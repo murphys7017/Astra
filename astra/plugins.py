@@ -20,7 +20,7 @@ class PluginManifest:
     version: str
     entrypoint: str
     declared_components: Tuple[str, ...] = ()
-    dependencies: Tuple[str, ...] = ()
+    dependencies: Tuple[Tuple[str, Optional[str]], ...] = ()
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "PluginManifest":
@@ -36,7 +36,7 @@ class PluginManifest:
         if not all(isinstance(item, str) and item.strip() for item in (plugin_id, version, entrypoint)):
             raise PluginManifestError("plugin id, version and entrypoint must be non-empty strings")
         components = _string_tuple(raw.get("components", ()), "components")
-        dependencies = _string_tuple(raw.get("dependencies", ()), "dependencies")
+        dependencies = _dependency_tuple(raw.get("dependencies", ()))
         return cls(plugin_id, version, entrypoint, components, dependencies)
 
 
@@ -165,8 +165,12 @@ def _dependency_order(
         except KeyError as exc:
             raise PluginDependencyError("missing plugin dependency: {}".format(plugin_id)) from exc
         visiting.add(plugin_id)
-        for dependency in manifest.dependencies:
+        for dependency, required_version in manifest.dependencies:
             visit(dependency)
+            if required_version is not None and entries[dependency][1].version != required_version:
+                raise PluginDependencyError(
+                    "plugin {} requires {} version {}".format(plugin_id, dependency, required_version)
+                )
         visiting.remove(plugin_id)
         visited.add(plugin_id)
         order.append(plugin_id)
@@ -184,4 +188,26 @@ def _string_tuple(value: Any, label: str) -> Tuple[str, ...]:
         if not isinstance(item, str) or not item.strip():
             raise PluginManifestError("{} must contain non-empty strings".format(label))
         result.append(item)
+    return tuple(result)
+
+
+def _dependency_tuple(value: Any) -> Tuple[Tuple[str, Optional[str]], ...]:
+    if not isinstance(value, (list, tuple)):
+        raise PluginManifestError("dependencies must be an array")
+    result = []
+    for item in value:
+        if isinstance(item, str):
+            if not item.strip():
+                raise PluginManifestError("dependency id must not be empty")
+            result.append((item, None))
+            continue
+        if not isinstance(item, Mapping) or set(item) - {"id", "version"} or "id" not in item:
+            raise PluginManifestError("dependency must be an id or an id/version object")
+        dependency_id = item["id"]
+        version = item.get("version")
+        if not isinstance(dependency_id, str) or not dependency_id.strip():
+            raise PluginManifestError("dependency id must be a non-empty string")
+        if version is not None and (not isinstance(version, str) or not version.strip()):
+            raise PluginManifestError("dependency version must be a non-empty string")
+        result.append((dependency_id, version))
     return tuple(result)

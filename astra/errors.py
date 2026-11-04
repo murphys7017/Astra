@@ -17,6 +17,10 @@ class CapabilityVersionError(AstraError):
     """Providers exist, but none satisfies the requested version."""
 
 
+class CapabilityModeError(AstraError):
+    """A capability does not support the requested invoke or stream mode."""
+
+
 class CapabilityAmbiguousError(AstraError):
     """More than one provider satisfies a requirement without a binding."""
 

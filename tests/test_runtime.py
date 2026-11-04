@@ -1,9 +1,11 @@
 import asyncio
+import time
 import unittest
 
 from astra import (
     CallableWorkflow,
     CapabilityAmbiguousError,
+    CapabilityModeError,
     CapabilityNotFoundError,
     CapabilityRequirement,
     CapabilitySpec,
@@ -11,8 +13,11 @@ from astra import (
     Event,
     EventBus,
     FunctionComponent,
+    InvocationMode,
     MemoryLogSink,
+    NonBlockingLogSink,
     ParallelWorkflow,
+    PipelineWorkflow,
     RouteWorkflow,
     Runtime,
     SerialWorkflow,
@@ -68,7 +73,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_ambiguous_provider_requires_binding(self):
         async def scenario():
-            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            sink = MemoryLogSink()
+            runtime = Runtime(StructuredLogger([sink]))
             runtime.register_component(FunctionComponent("one", {"echo": lambda request, inv: "one"}))
             runtime.register_component(FunctionComponent("two", {"echo": lambda request, inv: "two"}))
             workflow = SerialWorkflow("caller", [lambda context, value: context.invoke("echo", value)])
@@ -82,9 +88,23 @@ class RuntimeTests(unittest.TestCase):
 
         self.run_async(scenario())
 
+    def test_capability_contract_normalizes_permissions_and_mode(self):
+        spec = CapabilitySpec("normalized", mode="stream", permissions={"network.read"})
+        self.assertEqual(spec.mode, InvocationMode.STREAM)
+        self.assertEqual(spec.permissions, frozenset({"network.read"}))
+        with self.assertRaises(ValueError):
+            FunctionComponent("missing", capabilities={"unknown": CapabilitySpec("unknown")})
+        with self.assertRaises(ValueError):
+            FunctionComponent(
+                "wrong-mode",
+                {"call": lambda request, inv: request},
+                capabilities={"call": CapabilitySpec("call", mode=InvocationMode.STREAM)},
+            )
+
     def test_missing_and_incompatible_capabilities_fail_deterministically(self):
         async def scenario():
-            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            sink = MemoryLogSink()
+            runtime = Runtime(StructuredLogger([sink]))
             runtime.register_component(
                 FunctionComponent(
                     "versioned",
@@ -127,6 +147,26 @@ class RuntimeTests(unittest.TestCase):
 
         self.run_async(scenario())
 
+    def test_nonblocking_sink_does_not_hold_the_execution_path(self):
+        class SlowSink:
+            def __init__(self):
+                self.records = []
+
+            def write(self, record):
+                time.sleep(0.03)
+                self.records.append(record)
+
+        slow = SlowSink()
+        sink = NonBlockingLogSink(slow, maxsize=8)
+        logger = StructuredLogger([sink])
+        started = time.perf_counter()
+        logger.emit("info", "nonblocking", "queued")
+        elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 0.02)
+        sink.flush()
+        sink.close()
+        self.assertEqual(len(slow.records), 1)
+
     def test_workflow_component_can_be_invoked_as_capability(self):
         async def scenario():
             runtime = Runtime(StructuredLogger([MemoryLogSink()]))
@@ -162,11 +202,87 @@ class RuntimeTests(unittest.TestCase):
 
         self.run_async(scenario())
 
+    def test_pipeline_and_stream_preserve_order_and_terminal_state(self):
+        async def scenario():
+            producer_closed = asyncio.Event()
+
+            async def chunks(request, invocation):
+                try:
+                    for item in request:
+                        invocation.raise_if_cancelled()
+                        yield item
+                finally:
+                    producer_closed.set()
+
+            sink = MemoryLogSink()
+            runtime = Runtime(StructuredLogger([sink]))
+            runtime.register_component(
+                FunctionComponent(
+                    "streamer",
+                    stream_handlers={"tokens": chunks},
+                    capabilities={"tokens": CapabilitySpec("tokens", mode=InvocationMode.STREAM)},
+                )
+            )
+            runtime.register_component(FunctionComponent("invoke-only", {"echo": lambda request, inv: request}))
+
+            async def collect(context, value):
+                result = []
+                async for item in context.stream("tokens", value):
+                    result.append(item)
+                return result
+
+            pipeline = PipelineWorkflow("pipeline", [lambda context, value: [item * 2 for item in value], collect])
+            await runtime.start()
+            self.assertEqual(await runtime.run_workflow(pipeline, [1, 2, 3]), [2, 4, 6])
+            producer_closed.clear()
+
+            async def take_one(context, value):
+                stream = context.stream("tokens", value)
+                async for item in stream:
+                    return item
+
+            self.assertEqual(
+                await runtime.run_workflow(CallableWorkflow("take-one", take_one), [9, 10]),
+                9,
+            )
+            await asyncio.wait_for(producer_closed.wait(), timeout=1)
+            self.assertTrue(
+                any(
+                    record.event == "stream_finished"
+                    and record.fields.get("state") == "cancelled"
+                    for record in sink.records
+                )
+            )
+
+            async def wrong_mode(context, value):
+                async for _ in context.stream("echo", value):
+                    pass
+
+            with self.assertRaises(CapabilityModeError):
+                await runtime.run_workflow(
+                    SerialWorkflow("wrong-mode", [wrong_mode]),
+                    "value",
+                )
+            await runtime.stop()
+
+        self.run_async(scenario())
+
     def test_event_subscriptions_are_scope_bound_and_trigger_workflow(self):
         async def scenario():
-            sink = MemoryLogSink()
+            failure_seen = asyncio.Event()
+
+            class EventSink(MemoryLogSink):
+                def write(self, record):
+                    super().write(record)
+                    if record.event == "event_workflow_failed":
+                        failure_seen.set()
+
+            sink = EventSink()
             logger = StructuredLogger([sink])
             bus = EventBus(logger)
+            immutable = Event("immutable", {"values": [1]})
+            with self.assertRaises(TypeError):
+                immutable.payload["values"] = (2,)
             scope = Scope()
             seen = []
             bus.subscribe("fact", lambda event: seen.append(event.payload), scope=scope)
@@ -200,10 +316,20 @@ class RuntimeTests(unittest.TestCase):
 
             bus.subscribe_workflow("bad", CallableWorkflow("bad-workflow", fail), runtime, scope=trigger_scope)
             await bus.publish(Event("bad", None))
-            await asyncio.sleep(0.01)
-            self.assertTrue(any(record.event == "event_workflow_failed" for record in sink.records))
+            await asyncio.wait_for(failure_seen.wait(), timeout=1)
             await trigger_scope.close()
             await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_closed_scope_cannot_leave_a_subscription_behind(self):
+        async def scenario():
+            bus = EventBus(StructuredLogger([MemoryLogSink()]))
+            scope = Scope()
+            await scope.close()
+            with self.assertRaises(RuntimeError):
+                bus.subscribe("closed", lambda event: None, scope=scope)
+            self.assertEqual(bus._subscribers, {})
 
         self.run_async(scenario())
 
@@ -250,6 +376,111 @@ class RuntimeTests(unittest.TestCase):
             await runtime.start()
             with self.assertRaises(asyncio.TimeoutError):
                 await runtime.run_workflow(workflow, None, timeout=0.01)
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_stubborn_provider_cannot_publish_late_success_after_timeout(self):
+        async def scenario():
+            async def stubborn(request, invocation):
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    return "late"
+                return "done"
+
+            sink = MemoryLogSink()
+            runtime = Runtime(StructuredLogger([sink]))
+            runtime.register_component(FunctionComponent("stubborn", {"call": stubborn}))
+            workflow = SerialWorkflow(
+                "stubborn-workflow",
+                [lambda context, value: context.invoke("call", value, timeout=0.01)],
+            )
+            await runtime.start()
+            with self.assertRaises(asyncio.TimeoutError):
+                await runtime.run_workflow(workflow, None)
+            self.assertTrue(
+                any(
+                    record.event == "invocation_finished"
+                    and record.fields.get("state") == "timed_out"
+                    for record in sink.records
+                )
+            )
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_run_cancellation_reaches_provider_and_closes_stream(self):
+        async def scenario():
+            producer_closed = asyncio.Event()
+
+            async def endless(request, invocation):
+                try:
+                    while True:
+                        invocation.raise_if_cancelled()
+                        yield 1
+                        await asyncio.sleep(0)
+                finally:
+                    producer_closed.set()
+
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_component(
+                FunctionComponent(
+                    "streamer",
+                    stream_handlers={"tokens": endless},
+                    capabilities={"tokens": CapabilitySpec("tokens", mode=InvocationMode.STREAM)},
+                )
+            )
+
+            async def consume(context, value):
+                async for _ in context.stream("tokens", value):
+                    await asyncio.sleep(0)
+
+            await runtime.start()
+            task = asyncio.create_task(runtime.run_workflow(CallableWorkflow("cancel", consume), None))
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await asyncio.wait_for(producer_closed.wait(), timeout=1)
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_scope_cancellation_interrupts_a_blocked_stream(self):
+        async def scenario():
+            producer_started = asyncio.Event()
+            producer_closed = asyncio.Event()
+
+            async def blocked(request, invocation):
+                producer_started.set()
+                try:
+                    await asyncio.Future()
+                    yield 1
+                finally:
+                    producer_closed.set()
+
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_component(
+                FunctionComponent(
+                    "blocked-stream",
+                    stream_handlers={"tokens": blocked},
+                    capabilities={"tokens": CapabilitySpec("tokens", mode=InvocationMode.STREAM)},
+                )
+            )
+
+            async def cancel_scope(context, value):
+                stream = context.stream("tokens", value)
+                next_item = asyncio.create_task(stream.__anext__())
+                await producer_started.wait()
+                context.run.scope.cancel("test cancellation")
+                with self.assertRaises(asyncio.CancelledError):
+                    await next_item
+
+            await runtime.start()
+            with self.assertRaises(asyncio.CancelledError):
+                await runtime.run_workflow(CallableWorkflow("cancel-scope", cancel_scope), None)
+            await asyncio.wait_for(producer_closed.wait(), timeout=1)
             await runtime.stop()
 
         self.run_async(scenario())

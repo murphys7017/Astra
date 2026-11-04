@@ -4,51 +4,51 @@
 
 ## 边界验收
 
-- [ ] Kernel 不依赖任何外部项目或平台的具体类型。
-- [ ] Persona、Memory、Agent、设备和平台逻辑都有明确的领域归属。
-- [ ] Workflow 可以作为 Component，但不要求 Kernel 理解业务流程。
-- [ ] Workflow 的最小串行、路由和子流程调用语义可以被验证。
-- [ ] Event 是事实通知，不隐式承担命令或请求响应职责。
+- [x] Kernel 不依赖任何外部项目或平台的具体类型。
+- [x] Persona、Memory、Agent、设备和平台逻辑都有明确的领域归属。
+- [x] Workflow 可以作为 Component，但不要求 Kernel 理解业务流程。
+- [x] Workflow 的最小串行、路由和子流程调用语义可以被验证。
+- [x] Event 是事实通知，不隐式承担命令或请求响应职责。
 
 ## 能力验收
 
-- [ ] Capability 有身份、版本、输入、输出和交互模式。
-- [ ] Provider 缺失、版本不兼容和歧义解析会确定性失败。
-- [ ] 一次 Invocation 会固定自己的 Provider Binding。
-- [ ] 调用方替换 Provider 时无需依赖 Provider 内部实现。
-- [ ] JSON 可以表达当前启用组合、Capability 绑定和运行参数，但不取代 Workflow 运行语义。
+- [x] Capability 有身份、版本、输入、输出和交互模式。
+- [x] Provider 缺失、版本不兼容和歧义解析会确定性失败。
+- [x] 一次 Invocation 会固定自己的 Provider Binding。
+- [x] 调用方替换 Provider 时无需依赖 Provider 内部实现。
+- [x] JSON 可以表达当前启用组合、Capability 绑定和运行参数，但不取代 Workflow 运行语义。
 
 ## 执行验收
 
-- [ ] Run、Invocation、Scope 和领域身份可以区分。
-- [ ] 父 Run 取消会向子调用传播。
-- [ ] 后台任务必须显式脱离父 Scope。
-- [ ] 已结束执行不会接收迟到结果。
-- [ ] Kernel 终态与领域完成事实不会混淆。
-- [ ] 一次 Run 固定自己的组合代际，运行中不发生组件或 Provider 替换。
+- [x] Run、Invocation、Scope 和领域身份可以区分。
+- [x] 父 Run 取消会向子调用传播。
+- [x] 后台任务必须显式脱离父 Scope。
+- [x] 已结束执行不会接收迟到结果。
+- [x] Kernel 终态与领域完成事实不会混淆。
+- [x] 一次 Run 固定自己的组合代际，运行中不发生组件或 Provider 替换。
 
 ## 流和事件验收
 
-- [ ] Stream 保持顺序并且只有一个终态。
-- [ ] Stream 取消可以到达生产者并释放资源。
-- [ ] Event 订阅绑定 Scope，Scope 停止时自动注销。
-- [ ] 订阅者异常不会破坏其他订阅者或发布方。
-- [ ] 第一阶段不会把 Token 或音频分块默认广播到 EventBus。
+- [x] Stream 保持顺序并且只有一个终态。
+- [x] Stream 取消可以到达生产者并释放资源。
+- [x] Event 订阅绑定 Scope，Scope 停止时自动注销。
+- [x] 订阅者异常不会破坏其他订阅者或发布方。
+- [x] 第一阶段不会把 Token 或音频分块默认广播到 EventBus。
 
 ## 插件和日志验收
 
-- [ ] 可信本地插件可以离线发现、校验、载入和停止。
-- [ ] 插件载入失败不会留下半注册状态。
-- [ ] 日志记录通过统一结构化数据接口产生，并关联 Run、Invocation、Scope 和 Component。
-- [ ] 没有日志输出插件时仍然可以获得最小诊断信息。
-- [ ] 日志输出失败不会阻塞主流程，敏感配置不会进入日志、Trace、错误文本或事件数据。
+- [x] 可信本地插件可以离线发现、校验、载入和停止。
+- [x] 插件载入失败不会留下半注册状态。
+- [x] 日志记录通过统一结构化数据接口产生，并关联 Run、Invocation、Scope 和 Component。
+- [x] 没有日志输出插件时仍然可以获得最小诊断信息。
+- [x] 日志输出失败不会阻塞主流程，敏感配置不会进入日志、Trace、错误文本或事件数据。
 
 ## 权限和副作用验收
 
-- [ ] 权限拒绝发生在 Provider 执行之前。
+- [x] 权限拒绝发生在 Provider 执行之前。
 - [ ] 外部副作用声明幂等性或不可安全重试。
-- [ ] Runtime 停止不会假定外部业务副作用自动撤销。
-- [ ] Managed Resource 的释放有明确 Owner。
+- [x] Runtime 停止不会假定外部业务副作用自动撤销。
+- [x] Managed Resource 的释放有明确 Owner。
 
 ## 进入实现阶段的门槛
 

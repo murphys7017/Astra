@@ -56,6 +56,11 @@ class SecretValue:
     def is_inline(self) -> bool:
         return self.value is not None
 
+    def __repr__(self) -> str:
+        if self.reference is not None:
+            return "SecretValue(reference={!r})".format(self.reference)
+        return "SecretValue(value=<redacted>, protected={!r})".format(self.protected)
+
 
 @dataclass(frozen=True)
 class RuntimeConfig:
@@ -311,15 +316,17 @@ def _parse_secrets(value: Any) -> Dict[str, SecretValue]:
     return result
 
 
-def _validate_unscoped_secrets(value: Any, inside_secrets: bool = False) -> None:
+def _validate_unscoped_secrets(value: Any, inside_secrets: bool = False, path: Tuple[str, ...] = ()) -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
             key_text = str(key)
+            if key_text == "secrets" and path:
+                raise SensitiveConfigurationError("secrets is only allowed at the top level")
             if not inside_secrets and key_text != "secrets" and _secret_key(key_text):
                 raise SensitiveConfigurationError(
                     "sensitive field {} must be placed under protected secrets".format(key_text)
                 )
-            _validate_unscoped_secrets(item, inside_secrets or key_text == "secrets")
+            _validate_unscoped_secrets(item, inside_secrets or (key_text == "secrets" and not path), path + (key_text,))
     elif isinstance(value, (list, tuple)):
         for item in value:
-            _validate_unscoped_secrets(item, inside_secrets)
+            _validate_unscoped_secrets(item, inside_secrets, path)

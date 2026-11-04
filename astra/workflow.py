@@ -27,6 +27,16 @@ class WorkflowContext:
         self.run.scope.raise_if_cancelled()
         return await self.run.invoke(capability, request, timeout=timeout)
 
+    def stream(self, capability: Any, request: Any):
+        self.run.scope.raise_if_cancelled()
+        stream = self.run.runtime.stream(capability, request, run=self.run)
+
+        async def close_stream() -> None:
+            await stream.aclose()
+
+        self.run.scope.add_cleanup(close_stream)
+        return stream
+
     async def child(self, workflow: WorkflowDefinition, value: Any, timeout: Optional[float] = None) -> Any:
         self.run.scope.raise_if_cancelled()
         return await self.run.run_child(workflow, value, timeout=timeout)
@@ -59,6 +69,10 @@ class SerialWorkflow(WorkflowDefinition):
             context.run.scope.raise_if_cancelled()
             result = await _maybe_await(step(context, result))
         return result
+
+
+class PipelineWorkflow(SerialWorkflow):
+    """An explicitly named ordered data pipeline."""
 
 
 class RouteWorkflow(WorkflowDefinition):

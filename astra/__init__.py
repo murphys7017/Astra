@@ -7,6 +7,7 @@ from .errors import (
     AstraError,
     CapabilityAmbiguousError,
     CapabilityNotFoundError,
+    CapabilityModeError,
     CapabilityVersionError,
     ComponentLifecycleError,
     ConfigurationError,
@@ -28,13 +29,14 @@ from .execution import (
     Scope,
     WorkflowRun,
 )
-from .logging import LogRecord, MemoryLogSink, StructuredLogger
+from .logging import LogRecord, MemoryLogSink, NonBlockingLogSink, StructuredLogger
 from .plugins import LoadedPlugin, PluginLoader, PluginManifest
 from .workflow import (
     CallableWorkflow,
     ChildWorkflow,
     RouteWorkflow,
     ParallelWorkflow,
+    PipelineWorkflow,
     SerialWorkflow,
     WorkflowContext,
     WorkflowDefinition,
@@ -45,6 +47,7 @@ __all__ = [
     "AstraError",
     "CapabilityAmbiguousError",
     "CapabilityNotFoundError",
+    "CapabilityModeError",
     "CapabilityRequirement",
     "CapabilitySpec",
     "CapabilityVersionError",
@@ -63,6 +66,7 @@ __all__ = [
     "InvocationState",
     "LogRecord",
     "MemoryLogSink",
+    "NonBlockingLogSink",
     "LoadedPlugin",
     "PluginDependencyError",
     "PluginError",
@@ -73,6 +77,7 @@ __all__ = [
     "ProviderBinding",
     "RouteWorkflow",
     "ParallelWorkflow",
+    "PipelineWorkflow",
     "RunState",
     "Runtime",
     "RuntimeConfig",

@@ -26,12 +26,33 @@ class CapabilitySpec:
     mode: InvocationMode = InvocationMode.INVOKE
     side_effect: SideEffect = SideEffect.PURE
     permissions: FrozenSet[str] = frozenset()
+    input_type: Optional[str] = None
+    output_type: Optional[str] = None
+    retry_safe: bool = False
 
     def __post_init__(self) -> None:
-        if not self.name or not self.name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("capability name must not be empty")
-        if not self.version or not self.version.strip():
+        if not isinstance(self.version, str) or not self.version.strip():
             raise ValueError("capability version must not be empty")
+        if not isinstance(self.mode, InvocationMode):
+            try:
+                object.__setattr__(self, "mode", InvocationMode(self.mode))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("capability mode is invalid") from exc
+        if not isinstance(self.side_effect, SideEffect):
+            try:
+                object.__setattr__(self, "side_effect", SideEffect(self.side_effect))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("capability side_effect is invalid") from exc
+        if not isinstance(self.permissions, (frozenset, set, list, tuple)):
+            raise ValueError("capability permissions must be a collection of strings")
+        permissions = frozenset(self.permissions)
+        if not all(isinstance(item, str) and item.strip() for item in permissions):
+            raise ValueError("capability permissions must contain non-empty strings")
+        object.__setattr__(self, "permissions", permissions)
+        if not isinstance(self.retry_safe, bool):
+            raise ValueError("capability retry_safe must be a boolean")
 
 
 @dataclass(frozen=True)

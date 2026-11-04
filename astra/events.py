@@ -2,11 +2,26 @@
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import inspect
+from types import MappingProxyType
 import uuid
 from typing import Any, Callable, Dict, Optional, Set
 
-from .execution import Scope, _maybe_await
+from .execution import Scope
 from .logging import StructuredLogger
+
+
+def _freeze_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_payload(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_payload(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_payload(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_payload(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -16,10 +31,14 @@ class Event:
     source: Optional[str] = None
     correlation_id: Optional[str] = None
     event_id: str = ""
+    created_at: str = ""
 
     def __post_init__(self) -> None:
         if not self.event_id:
             object.__setattr__(self, "event_id", "event-" + uuid.uuid4().hex)
+        if not self.created_at:
+            object.__setattr__(self, "created_at", datetime.now(timezone.utc).isoformat())
+        object.__setattr__(self, "payload", _freeze_payload(self.payload))
         if not self.event_type or not self.event_type.strip():
             raise ValueError("event type must not be empty")
 
@@ -41,6 +60,7 @@ class EventBus:
     def __init__(self, logger: Optional[StructuredLogger] = None) -> None:
         self.logger = logger or StructuredLogger()
         self._subscribers: Dict[str, Dict[str, Callable[[Event], Any]]] = {}
+        self._pending: Dict[str, Set[asyncio.Task]] = {}
 
     def subscribe(
         self,
@@ -50,6 +70,8 @@ class EventBus:
     ) -> EventSubscription:
         if not event_type or not event_type.strip():
             raise ValueError("event type must not be empty")
+        if scope is not None and scope.closed:
+            raise RuntimeError("cannot subscribe with a closed scope")
         token = uuid.uuid4().hex
         self._subscribers.setdefault(event_type, {})[token] = handler
         subscription = EventSubscription(self, event_type, token)
@@ -58,10 +80,12 @@ class EventBus:
         return subscription
 
     async def publish(self, event: Event) -> None:
-        handlers = tuple(self._subscribers.get(event.event_type, {}).values())
-        for handler in handlers:
+        handlers = tuple(self._subscribers.get(event.event_type, {}).items())
+        for token, handler in handlers:
             try:
-                await _maybe_await(handler(event))
+                result = handler(event)
+                if inspect.isawaitable(result):
+                    self._schedule(token, event.event_type, result)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -105,9 +129,12 @@ class EventBus:
 
         subscription = self.subscribe(event_type, handler, scope=scope)
         if scope is not None:
-            def cancel_tasks() -> None:
-                for task in tuple(tasks):
+            async def cancel_tasks() -> None:
+                pending = tuple(tasks)
+                for task in pending:
                     task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
             scope.add_cleanup(cancel_tasks)
         return subscription
@@ -117,5 +144,31 @@ class EventBus:
         if handlers is None:
             return
         handlers.pop(token, None)
+        for task in tuple(self._pending.pop(token, ())):
+            task.cancel()
         if not handlers:
             self._subscribers.pop(event_type, None)
+
+    def _schedule(self, token: str, event_type: str, awaitable: Any) -> None:
+        task = asyncio.create_task(awaitable)
+        self._pending.setdefault(token, set()).add(task)
+
+        def consume_result(completed: asyncio.Task) -> None:
+            pending = self._pending.get(token)
+            if pending is not None:
+                pending.discard(completed)
+                if not pending:
+                    self._pending.pop(token, None)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception as exc:
+                self.logger.emit(
+                    "error",
+                    "event_handler_failed",
+                    "event handler failed",
+                    fields={"event_type": event_type, "error_type": type(exc).__name__},
+                )
+
+        task.add_done_callback(consume_result)
