@@ -79,10 +79,13 @@ class RuntimeConfig:
         if unknown:
             raise ConfigurationError("unknown config fields: {}".format(", ".join(sorted(map(str, unknown)))))
         version = data.get("schema_version", 1)
-        if not isinstance(version, int) or version != 1:
+        if isinstance(version, bool) or not isinstance(version, int) or version != 1:
             raise ConfigurationError("schema_version must be 1")
         plugins = _string_tuple(data.get("plugins", ()), "plugins")
         components = _optional_string_tuple(data.get("components"), "components")
+        _require_unique(plugins, "plugins")
+        if components is not None:
+            _require_unique(components, "components")
 
         workflow_entries = data.get("workflows")
         workflow_names: Optional[Tuple[str, ...]]
@@ -91,6 +94,7 @@ class RuntimeConfig:
             workflow_names = None
         elif isinstance(workflow_entries, list):
             names = []
+            declared_names = []
             for index, entry in enumerate(workflow_entries):
                 item = _require_mapping(entry, "workflows[{}]".format(index))
                 unknown_workflow_fields = set(item) - {"name", "enabled", "params"}
@@ -99,10 +103,16 @@ class RuntimeConfig:
                 name = item.get("name")
                 if not isinstance(name, str) or not name.strip():
                     raise ConfigurationError("workflows[{}].name must be a non-empty string".format(index))
-                if item.get("enabled", True):
+                declared_names.append(name)
+                enabled = item.get("enabled", True)
+                if not isinstance(enabled, bool):
+                    raise ConfigurationError("workflows[{}].enabled must be boolean".format(index))
+                if enabled:
                     names.append(name)
                     params[name] = _freeze(_require_mapping(item.get("params", {}), "workflows[{}].params".format(index)))
             workflow_names = tuple(names)
+            _require_unique(tuple(declared_names), "workflows")
+            _require_unique(workflow_names, "workflows")
         else:
             raise ConfigurationError("workflows must be an array")
 
@@ -111,12 +121,15 @@ class RuntimeConfig:
         if unknown_composition_fields:
             raise ConfigurationError("unknown composition fields: {}".format(", ".join(sorted(map(str, unknown_composition_fields)))))
         order = _string_tuple(composition.get("order", ()), "composition.order")
+        _require_unique(order, "composition.order")
         parallel = _parallel_groups(composition.get("parallel", ()))
         branches = _branch_tuple(composition.get("branches", ()))
 
         binding_data = _require_mapping(data.get("bindings", {}), "bindings")
         bindings: Dict[str, CapabilityRequirement] = {}
         for capability, raw_binding in binding_data.items():
+            if not isinstance(capability, str) or not capability.strip():
+                raise ConfigurationError("binding capability name must be non-empty")
             item = _require_mapping(raw_binding, "bindings.{}".format(capability))
             unknown_binding_fields = set(item) - {"provider", "version"}
             if unknown_binding_fields:
@@ -130,6 +143,10 @@ class RuntimeConfig:
             bindings[str(capability)] = CapabilityRequirement(str(capability), version_value, provider)
 
         permissions = _freeze(_require_mapping(data.get("permissions", {}), "permissions"))
+        allow = permissions.get("allow")
+        if allow is not None:
+            if not isinstance(allow, tuple) or any(not isinstance(item, str) or not item.strip() for item in allow):
+                raise ConfigurationError("permissions.allow must be an array of non-empty strings")
         secrets = _parse_secrets(data.get("secrets", {}))
         return cls(
             schema_version=version,
@@ -240,7 +257,12 @@ def _optional_string_tuple(value: Any, label: str) -> Optional[Tuple[str, ...]]:
 def _parallel_groups(value: Any) -> Tuple[Tuple[str, ...], ...]:
     if not isinstance(value, (list, tuple)):
         raise ConfigurationError("composition.parallel must be an array")
-    return tuple(_string_tuple(group, "composition.parallel group") for group in value)
+    result = []
+    for group in value:
+        names = _string_tuple(group, "composition.parallel group")
+        _require_unique(names, "composition.parallel group")
+        result.append(names)
+    return tuple(result)
 
 
 def _branch_tuple(value: Any) -> Tuple[Mapping[str, Any], ...]:
@@ -250,12 +272,25 @@ def _branch_tuple(value: Any) -> Tuple[Mapping[str, Any], ...]:
     for index, branch in enumerate(value):
         item = _require_mapping(branch, "composition.branches[{}]".format(index))
         required = {"from", "to"}
+        unknown = set(item) - required
+        if unknown:
+            raise ConfigurationError("unknown composition branch fields")
         if not required.issubset(item):
             raise ConfigurationError("composition.branches[{}] requires from and to".format(index))
-        if not isinstance(item["from"], str) or not isinstance(item["to"], str):
-            raise ConfigurationError("composition branch endpoints must be strings")
+        if (
+            not isinstance(item["from"], str)
+            or not item["from"].strip()
+            or not isinstance(item["to"], str)
+            or not item["to"].strip()
+        ):
+            raise ConfigurationError("composition branch endpoints must be non-empty strings")
         result.append(_freeze(item))
     return tuple(result)
+
+
+def _require_unique(values: Tuple[str, ...], label: str) -> None:
+    if len(values) != len(set(values)):
+        raise ConfigurationError("{} must not contain duplicates".format(label))
 
 
 def _parse_secrets(value: Any) -> Dict[str, SecretValue]:

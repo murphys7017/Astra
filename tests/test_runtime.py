@@ -164,7 +164,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_event_subscriptions_are_scope_bound_and_trigger_workflow(self):
         async def scenario():
-            logger = StructuredLogger([MemoryLogSink()])
+            sink = MemoryLogSink()
+            logger = StructuredLogger([sink])
             bus = EventBus(logger)
             scope = Scope()
             seen = []
@@ -188,8 +189,19 @@ class RuntimeTests(unittest.TestCase):
             trigger_scope = Scope()
             bus.subscribe_workflow("trigger", workflow, runtime, scope=trigger_scope)
             await runtime.start()
-            await bus.publish(Event("trigger", {"value": 3}))
+            await bus.publish(Event("trigger", {"value": 3}, correlation_id="corr-event"))
             await asyncio.wait_for(received.wait(), timeout=1)
+            self.assertTrue(
+                any(record.event == "run_started" and record.correlation_id == "corr-event" for record in sink.records)
+            )
+
+            async def fail(context, value):
+                raise ValueError("expected")
+
+            bus.subscribe_workflow("bad", CallableWorkflow("bad-workflow", fail), runtime, scope=trigger_scope)
+            await bus.publish(Event("bad", None))
+            await asyncio.sleep(0.01)
+            self.assertTrue(any(record.event == "event_workflow_failed" for record in sink.records))
             await trigger_scope.close()
             await runtime.stop()
 
@@ -245,5 +257,3 @@ class RuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-    Event,
-    EventBus,

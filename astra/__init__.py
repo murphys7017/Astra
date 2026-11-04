@@ -13,6 +13,7 @@ from .errors import (
     PluginDependencyError,
     PluginError,
     PluginManifestError,
+    PermissionDeniedError,
     SensitiveConfigurationError,
     WorkflowError,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "PluginLoader",
     "PluginManifest",
     "PluginManifestError",
+    "PermissionDeniedError",
     "ProviderBinding",
     "RouteWorkflow",
     "ParallelWorkflow",

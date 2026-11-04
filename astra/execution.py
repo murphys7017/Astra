@@ -14,6 +14,7 @@ from .errors import (
     CapabilityVersionError,
     ComponentLifecycleError,
     ConfigurationError,
+    PermissionDeniedError,
 )
 from .logging import StructuredLogger
 
@@ -206,13 +207,14 @@ class WorkflowRun:
         scope: Scope,
         workflow_name: str,
         parent: Optional["WorkflowRun"] = None,
+        correlation_id: Optional[str] = None,
     ) -> None:
         self.run_id = _new_id("run")
         self.runtime = runtime
         self.scope = scope
         self.workflow_name = workflow_name
         self.parent = parent
-        self.correlation_id = parent.correlation_id if parent else _new_id("corr")
+        self.correlation_id = correlation_id or (parent.correlation_id if parent else _new_id("corr"))
         self.generation = runtime.generation
         self.state = RunState.CREATED
         self._task: Optional[asyncio.Task] = None
@@ -305,6 +307,7 @@ class WorkflowRun:
         return await self.runtime.invoke(requirement, request, run=self, timeout=timeout)
 
     async def run_child(self, workflow: Any, value: Any, timeout: Optional[float] = None) -> Any:
+        self.runtime._ensure_workflow_enabled(workflow.name)
         child_scope = Scope(self.scope)
         child = WorkflowRun(self.runtime, child_scope, workflow.name, parent=self)
         return await child.execute(workflow, value, timeout=timeout)
@@ -334,6 +337,7 @@ class Runtime:
         self._workflows: Dict[str, Any] = {}
         self._config = None
         self._composition = None
+        self._allowed_permissions = None
         self._started = False
         self._started_component_names: Tuple[str, ...] = ()
         self._active_runs: Set[WorkflowRun] = set()
@@ -369,6 +373,8 @@ class Runtime:
 
         self._config = config
         self._composition = CompositionSnapshot(self.generation, config)
+        allowed = config.permissions.get("allow")
+        self._allowed_permissions = None if allowed is None else frozenset(allowed)
 
     @property
     def composition(self) -> Any:
@@ -488,6 +494,20 @@ class Runtime:
             raise ComponentLifecycleError("runtime is not started")
         binding = self.resolve(requirement)
         component = self._components[binding.component_name]
+        required_permissions = binding.capability.permissions
+        if self._allowed_permissions is not None and not required_permissions.issubset(self._allowed_permissions):
+            self.logger.emit(
+                "warning",
+                "invocation_denied",
+                "capability permission denied",
+                run_id=run.run_id,
+                scope_id=run.scope.scope_id,
+                component=component.name,
+                workflow=run.workflow_name,
+                correlation_id=run.correlation_id,
+                fields={"capability": binding.capability.name},
+            )
+            raise PermissionDeniedError("permission denied for capability {}".format(binding.capability.name))
         invocation = Invocation(run, binding)
         invocation.state = InvocationState.RUNNING
         self.logger.emit(
@@ -538,7 +558,13 @@ class Runtime:
                 fields={"capability": binding.capability.name, "state": invocation.state.value},
             )
 
-    async def run_workflow(self, workflow: Any, value: Any, timeout: Optional[float] = None) -> Any:
+    async def run_workflow(
+        self,
+        workflow: Any,
+        value: Any,
+        timeout: Optional[float] = None,
+        correlation_id: Optional[str] = None,
+    ) -> Any:
         if not self._started:
             raise ComponentLifecycleError("runtime is not started")
         if isinstance(workflow, str):
@@ -546,11 +572,14 @@ class Runtime:
                 workflow = self._workflows[workflow]
             except KeyError as exc:
                 raise KeyError("unknown workflow: {}".format(workflow)) from exc
-        if self._config is not None and self._config.workflow_names is not None:
-            if workflow.name not in self._config.workflow_names:
-                raise ConfigurationError("workflow is not enabled: {}".format(workflow.name))
-        run = WorkflowRun(self, Scope(logger=self.logger), workflow.name)
+        self._ensure_workflow_enabled(workflow.name)
+        run = WorkflowRun(self, Scope(logger=self.logger), workflow.name, correlation_id=correlation_id)
         return await run.execute(workflow, value, timeout=timeout)
+
+    def _ensure_workflow_enabled(self, workflow_name: str) -> None:
+        if self._config is not None and self._config.workflow_names is not None:
+            if workflow_name not in self._config.workflow_names:
+                raise ConfigurationError("workflow is not enabled: {}".format(workflow_name))
 
     def _selected_component_names(self) -> Tuple[str, ...]:
         if self._config is None or self._config.component_names is None:

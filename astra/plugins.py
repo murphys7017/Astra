@@ -103,6 +103,10 @@ class PluginLoader:
             raise
         return tuple(loaded)
 
+    def load_configured(self, runtime: Runtime, config: Any) -> Tuple[LoadedPlugin, ...]:
+        """Load the plugin IDs selected by a RuntimeConfig before startup."""
+        return self.load_selected(runtime, config.plugin_refs)
+
     def _load_one(self, path: Path, manifest: PluginManifest) -> LoadedPlugin:
         module_name, separator, factory_name = manifest.entrypoint.partition(":")
         if not separator or not module_name or not factory_name:

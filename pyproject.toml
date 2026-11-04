@@ -12,3 +12,7 @@ dependencies = []
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["astra*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

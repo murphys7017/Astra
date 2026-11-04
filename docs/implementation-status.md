@@ -22,7 +22,10 @@
 - 可信本地 Plugin Manifest 发现、入口加载、依赖排序和注册事务回滚；
 - JSON 选择启用组件、Workflow 和 Capability Provider Binding。
 - 并行 Workflow 的结果汇合；
-- Scope 绑定的内存 EventBus 和事件触发 Workflow。
+- Scope 绑定的内存 EventBus 和事件触发 Workflow；
+- Provider 执行前的最小权限检查。
+
+插件回滚当前只覆盖 Runtime 注册表；由于插件在进程内执行，导入或工厂副作用仍要求插件自身保持可控。
 
 ## 当前验证
 
@@ -40,6 +43,8 @@ python -m compileall -q astra tests
 以下内容按开发计划保留在后续阶段：
 
 - Stream、Pipeline 和更完整的 Control 语义；
+- JSON 组合声明到实际图执行的组合引擎；当前由显式 Python Workflow 执行；
+- Runtime 运行中的配置热更新、Generation 切换和旧组合排空；
 - 资源限制、背压和更完整的故障策略；
 - 性能基线和热路径测量；
 - 外部模块自动适配。

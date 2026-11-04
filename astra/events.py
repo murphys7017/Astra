@@ -82,9 +82,26 @@ class EventBus:
         tasks: Set[asyncio.Task] = set()
 
         async def handler(event: Event) -> None:
-            task = asyncio.create_task(runtime.run_workflow(workflow, event.payload))
+            task = asyncio.create_task(
+                runtime.run_workflow(workflow, event.payload, correlation_id=event.correlation_id)
+            )
             tasks.add(task)
             task.add_done_callback(tasks.discard)
+
+            def consume_result(completed: asyncio.Task) -> None:
+                if completed.cancelled():
+                    return
+                try:
+                    completed.result()
+                except Exception as exc:
+                    self.logger.emit(
+                        "error",
+                        "event_workflow_failed",
+                        "event-triggered workflow failed",
+                        fields={"workflow": workflow.name, "error_type": type(exc).__name__},
+                    )
+
+            task.add_done_callback(consume_result)
 
         subscription = self.subscribe(event_type, handler, scope=scope)
         if scope is not None:

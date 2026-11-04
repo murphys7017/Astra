@@ -6,10 +6,13 @@ import unittest
 
 from astra import (
     CapabilityRequirement,
+    CapabilitySpec,
+    ChildWorkflow,
     ComponentLifecycleError,
     ConfigurationError,
     FunctionComponent,
     MemoryLogSink,
+    PermissionDeniedError,
     PluginLoader,
     Runtime,
     RuntimeConfig,
@@ -63,6 +66,55 @@ class ConfigAndPluginTests(unittest.TestCase):
             RuntimeConfig.from_dict({"secrets": {"api_key": {"value": "raw", "protected": False}}})
         with self.assertRaises(ConfigurationError):
             RuntimeConfig.from_dict({"unknown": True})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"components": ["same", "same"]})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"schema_version": True})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"workflows": [{"name": "same"}, {"name": "same", "enabled": False}]})
+
+    def test_disabled_child_workflow_cannot_bypass_config(self):
+        async def scenario():
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            child = SerialWorkflow("child", [lambda context, value: value])
+            parent = ChildWorkflow("parent", child)
+            runtime.register_workflow(child)
+            runtime.register_workflow(parent)
+            runtime.apply_config(RuntimeConfig.from_dict({"workflows": [{"name": "parent"}]}))
+            await runtime.start()
+            with self.assertRaises(ConfigurationError):
+                await runtime.run_workflow("parent", "value")
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_permission_is_checked_before_provider_execution(self):
+        async def scenario():
+            called = []
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_component(
+                FunctionComponent(
+                    "protected",
+                    {"read": lambda request, inv: called.append(True)},
+                    capabilities={
+                        "read": CapabilitySpec("read", permissions=frozenset({"filesystem.read"}))
+                    },
+                )
+            )
+            workflow = SerialWorkflow("protected-workflow", [lambda context, value: context.invoke("read", value)])
+            runtime.register_workflow(workflow)
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {"workflows": [{"name": "protected-workflow"}], "permissions": {"allow": []}}
+                )
+            )
+            await runtime.start()
+            with self.assertRaises(PermissionDeniedError):
+                await runtime.run_workflow("protected-workflow", None)
+            self.assertEqual(called, [])
+            await runtime.stop()
+
+        self.run_async(scenario())
 
     def test_local_plugin_loads_from_manifest_and_can_be_selected_by_config(self):
         async def scenario():
