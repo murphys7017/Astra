@@ -24,6 +24,7 @@
 - 并行 Workflow 的结果汇合；
 - Scope 绑定的内存 EventBus 和事件触发 Workflow；
 - Provider 执行前的最小权限检查。
+- 可重复的本地直接调用与 Workflow/Capability 调用性能基线脚本。
 
 插件回滚当前只覆盖 Runtime 注册表；由于插件在进程内执行，导入或工厂副作用仍要求插件自身保持可控。
 
