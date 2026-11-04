@@ -27,3 +27,23 @@ class PermissionDeniedError(AstraError):
 
 class WorkflowError(AstraError):
     """A workflow could not select or execute its next step."""
+
+
+class ConfigurationError(AstraError):
+    """The external runtime configuration is invalid or unsafe."""
+
+
+class SensitiveConfigurationError(ConfigurationError):
+    """Sensitive data is not represented through the protected secret boundary."""
+
+
+class PluginError(AstraError):
+    """A local plugin could not be discovered, validated or loaded."""
+
+
+class PluginManifestError(PluginError):
+    """A plugin manifest is malformed or inconsistent with its package."""
+
+
+class PluginDependencyError(PluginError):
+    """A plugin dependency cannot be satisfied locally."""

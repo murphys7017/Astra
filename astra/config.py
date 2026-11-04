@@ -1,0 +1,290 @@
+"""External JSON runtime configuration and immutable composition snapshots."""
+
+from dataclasses import dataclass, field
+import json
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
+
+from .contracts import CapabilityRequirement
+from .errors import ConfigurationError, SensitiveConfigurationError
+
+
+_TOP_LEVEL_KEYS = {
+    "schema_version",
+    "plugins",
+    "components",
+    "workflows",
+    "bindings",
+    "composition",
+    "permissions",
+    "secrets",
+}
+_SECRET_MARKERS = ("api_key", "apikey", "authorization", "credential", "password", "secret", "token")
+
+
+def _secret_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(marker in normalized for marker in _SECRET_MARKERS)
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ConfigurationError("{} must be an object".format(label))
+    return value
+
+
+@dataclass(frozen=True)
+class SecretValue:
+    """A secret represented either by a reference or a protected inline value."""
+
+    reference: Optional[str] = None
+    value: Optional[str] = None
+    protected: bool = False
+
+    @property
+    def is_inline(self) -> bool:
+        return self.value is not None
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    schema_version: int
+    plugin_refs: Tuple[str, ...] = ()
+    component_names: Optional[Tuple[str, ...]] = None
+    workflow_names: Optional[Tuple[str, ...]] = None
+    workflow_order: Tuple[str, ...] = ()
+    parallel_groups: Tuple[Tuple[str, ...], ...] = ()
+    branches: Tuple[Mapping[str, Any], ...] = ()
+    bindings: Mapping[str, CapabilityRequirement] = field(default_factory=lambda: MappingProxyType({}))
+    workflow_params: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: MappingProxyType({}))
+    permissions: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    secrets: Mapping[str, SecretValue] = field(default_factory=lambda: MappingProxyType({}))
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "RuntimeConfig":
+        data = _require_mapping(raw, "config")
+        _validate_unscoped_secrets(data)
+        unknown = set(data) - _TOP_LEVEL_KEYS
+        if unknown:
+            raise ConfigurationError("unknown config fields: {}".format(", ".join(sorted(map(str, unknown)))))
+        version = data.get("schema_version", 1)
+        if not isinstance(version, int) or version != 1:
+            raise ConfigurationError("schema_version must be 1")
+        plugins = _string_tuple(data.get("plugins", ()), "plugins")
+        components = _optional_string_tuple(data.get("components"), "components")
+
+        workflow_entries = data.get("workflows")
+        workflow_names: Optional[Tuple[str, ...]]
+        params: Dict[str, Mapping[str, Any]] = {}
+        if workflow_entries is None:
+            workflow_names = None
+        elif isinstance(workflow_entries, list):
+            names = []
+            for index, entry in enumerate(workflow_entries):
+                item = _require_mapping(entry, "workflows[{}]".format(index))
+                unknown_workflow_fields = set(item) - {"name", "enabled", "params"}
+                if unknown_workflow_fields:
+                    raise ConfigurationError("unknown workflow fields: {}".format(", ".join(sorted(map(str, unknown_workflow_fields)))))
+                name = item.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    raise ConfigurationError("workflows[{}].name must be a non-empty string".format(index))
+                if item.get("enabled", True):
+                    names.append(name)
+                    params[name] = _freeze(_require_mapping(item.get("params", {}), "workflows[{}].params".format(index)))
+            workflow_names = tuple(names)
+        else:
+            raise ConfigurationError("workflows must be an array")
+
+        composition = _require_mapping(data.get("composition", {}), "composition")
+        unknown_composition_fields = set(composition) - {"order", "parallel", "branches"}
+        if unknown_composition_fields:
+            raise ConfigurationError("unknown composition fields: {}".format(", ".join(sorted(map(str, unknown_composition_fields)))))
+        order = _string_tuple(composition.get("order", ()), "composition.order")
+        parallel = _parallel_groups(composition.get("parallel", ()))
+        branches = _branch_tuple(composition.get("branches", ()))
+
+        binding_data = _require_mapping(data.get("bindings", {}), "bindings")
+        bindings: Dict[str, CapabilityRequirement] = {}
+        for capability, raw_binding in binding_data.items():
+            item = _require_mapping(raw_binding, "bindings.{}".format(capability))
+            unknown_binding_fields = set(item) - {"provider", "version"}
+            if unknown_binding_fields:
+                raise ConfigurationError("unknown binding fields for {}".format(capability))
+            provider = item.get("provider")
+            version_value = item.get("version")
+            if provider is not None and (not isinstance(provider, str) or not provider.strip()):
+                raise ConfigurationError("binding provider must be a non-empty string")
+            if version_value is not None and (not isinstance(version_value, str) or not version_value.strip()):
+                raise ConfigurationError("binding version must be a non-empty string")
+            bindings[str(capability)] = CapabilityRequirement(str(capability), version_value, provider)
+
+        permissions = _freeze(_require_mapping(data.get("permissions", {}), "permissions"))
+        secrets = _parse_secrets(data.get("secrets", {}))
+        return cls(
+            schema_version=version,
+            plugin_refs=plugins,
+            component_names=components,
+            workflow_names=workflow_names,
+            workflow_order=order,
+            parallel_groups=parallel,
+            branches=branches,
+            bindings=MappingProxyType(bindings),
+            workflow_params=MappingProxyType(params),
+            permissions=permissions,
+            secrets=MappingProxyType(secrets),
+        )
+
+    @classmethod
+    def from_json(cls, source: Union[str, Path]) -> "RuntimeConfig":
+        path = Path(source)
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigurationError("could not read JSON runtime config") from exc
+        return cls.from_dict(raw)
+
+    def redacted(self) -> Mapping[str, Any]:
+        """Return diagnostics-safe configuration metadata without secret values."""
+        return MappingProxyType(
+            {
+                "schema_version": self.schema_version,
+                "plugins": self.plugin_refs,
+                "components": self.component_names,
+                "workflows": self.workflow_names,
+                "workflow_order": self.workflow_order,
+                "parallel_groups": self.parallel_groups,
+                "branches": self.branches,
+                "bindings": {
+                    name: {"provider": req.provider, "version": req.version}
+                    for name, req in self.bindings.items()
+                },
+                "secret_names": tuple(self.secrets),
+            }
+        )
+
+    def validate_registered(self, components: Mapping[str, Any], workflows: Mapping[str, Any]) -> None:
+        component_names = set(components)
+        workflow_names = set(workflows)
+        if self.component_names is not None:
+            unknown = set(self.component_names) - component_names
+            if unknown:
+                raise ConfigurationError("unknown configured components: {}".format(", ".join(sorted(unknown))))
+        if self.workflow_names is not None:
+            unknown = set(self.workflow_names) - workflow_names
+            if unknown:
+                raise ConfigurationError("unknown configured workflows: {}".format(", ".join(sorted(unknown))))
+        referenced_workflows = set(self.workflow_order)
+        for group in self.parallel_groups:
+            referenced_workflows.update(group)
+        for branch in self.branches:
+            referenced_workflows.add(str(branch["from"]))
+            referenced_workflows.add(str(branch["to"]))
+        unknown_references = referenced_workflows - workflow_names
+        if unknown_references:
+            raise ConfigurationError("composition references unknown workflows: {}".format(", ".join(sorted(unknown_references))))
+        if self.workflow_names is not None:
+            inactive_references = referenced_workflows - set(self.workflow_names)
+            if inactive_references:
+                raise ConfigurationError("composition references disabled workflows: {}".format(", ".join(sorted(inactive_references))))
+        for capability, requirement in self.bindings.items():
+            active_components = set(self.component_names) if self.component_names is not None else component_names
+            if requirement.provider is not None and requirement.provider not in active_components:
+                raise ConfigurationError(
+                    "binding for {} references unknown component {}".format(capability, requirement.provider)
+                )
+
+
+@dataclass(frozen=True)
+class CompositionSnapshot:
+    generation: int
+    config: RuntimeConfig
+
+    @property
+    def secret_names(self) -> Tuple[str, ...]:
+        return tuple(self.config.secrets)
+
+    def redacted(self) -> Mapping[str, Any]:
+        data = dict(self.config.redacted())
+        data["generation"] = self.generation
+        return MappingProxyType(data)
+
+
+def _string_tuple(value: Any, label: str) -> Tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ConfigurationError("{} must be an array".format(label))
+    result = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ConfigurationError("{} must contain non-empty strings".format(label))
+        result.append(item)
+    return tuple(result)
+
+
+def _optional_string_tuple(value: Any, label: str) -> Optional[Tuple[str, ...]]:
+    if value is None:
+        return None
+    return _string_tuple(value, label)
+
+
+def _parallel_groups(value: Any) -> Tuple[Tuple[str, ...], ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ConfigurationError("composition.parallel must be an array")
+    return tuple(_string_tuple(group, "composition.parallel group") for group in value)
+
+
+def _branch_tuple(value: Any) -> Tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ConfigurationError("composition.branches must be an array")
+    result = []
+    for index, branch in enumerate(value):
+        item = _require_mapping(branch, "composition.branches[{}]".format(index))
+        required = {"from", "to"}
+        if not required.issubset(item):
+            raise ConfigurationError("composition.branches[{}] requires from and to".format(index))
+        if not isinstance(item["from"], str) or not isinstance(item["to"], str):
+            raise ConfigurationError("composition branch endpoints must be strings")
+        result.append(_freeze(item))
+    return tuple(result)
+
+
+def _parse_secrets(value: Any) -> Dict[str, SecretValue]:
+    data = _require_mapping(value, "secrets")
+    result: Dict[str, SecretValue] = {}
+    for name, raw in data.items():
+        item = _require_mapping(raw, "secrets.{}".format(name))
+        if set(item) not in ({"ref"}, {"value", "protected"}):
+            raise SensitiveConfigurationError("secret {} must use a reference or a protected inline value".format(name))
+        if "ref" in item:
+            if not isinstance(item["ref"], str) or not item["ref"].strip():
+                raise SensitiveConfigurationError("secret reference must be a non-empty string")
+            result[str(name)] = SecretValue(reference=item["ref"])
+        else:
+            if not isinstance(item["value"], str) or item["protected"] is not True:
+                raise SensitiveConfigurationError("inline secret must be marked protected")
+            result[str(name)] = SecretValue(value=item["value"], protected=True)
+    return result
+
+
+def _validate_unscoped_secrets(value: Any, inside_secrets: bool = False) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            key_text = str(key)
+            if not inside_secrets and key_text != "secrets" and _secret_key(key_text):
+                raise SensitiveConfigurationError(
+                    "sensitive field {} must be placed under protected secrets".format(key_text)
+                )
+            _validate_unscoped_secrets(item, inside_secrets or key_text == "secrets")
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_unscoped_secrets(item, inside_secrets)

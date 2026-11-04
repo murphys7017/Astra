@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 import inspect
 import uuid
-from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from .contracts import CapabilityRequirement, CapabilitySpec
 from .errors import (
@@ -13,6 +13,7 @@ from .errors import (
     CapabilityNotFoundError,
     CapabilityVersionError,
     ComponentLifecycleError,
+    ConfigurationError,
 )
 from .logging import StructuredLogger
 
@@ -315,6 +316,12 @@ class WorkflowRun:
         if self._task is not None and self._task is not asyncio.current_task():
             self._task.cancel()
 
+    @property
+    def parameters(self) -> Mapping[str, Any]:
+        if self.runtime._config is None:
+            return {}
+        return self.runtime._config.workflow_params.get(self.workflow_name, {})
+
 
 class Runtime:
     """A single-process, local component runtime."""
@@ -325,7 +332,10 @@ class Runtime:
         self._components: Dict[str, Component] = {}
         self._providers: Dict[str, list] = {}
         self._workflows: Dict[str, Any] = {}
+        self._config = None
+        self._composition = None
         self._started = False
+        self._started_component_names: Tuple[str, ...] = ()
         self._active_runs: Set[WorkflowRun] = set()
 
     @property
@@ -342,6 +352,28 @@ class Runtime:
             raise ComponentLifecycleError("component exposes duplicate capabilities: {}".format(component.name))
         self._components[component.name] = component
 
+    def unregister_component(self, name: str) -> Component:
+        if self._started:
+            raise ComponentLifecycleError("components cannot be unregistered after runtime start")
+        try:
+            return self._components.pop(name)
+        except KeyError as exc:
+            raise ComponentLifecycleError("component is not registered: {}".format(name)) from exc
+
+    def apply_config(self, config: Any) -> None:
+        """Apply a validated RuntimeConfig before starting the runtime."""
+        if self._started:
+            raise ConfigurationError("configuration cannot change after runtime start")
+        config.validate_registered(self._components, self._workflows)
+        from .config import CompositionSnapshot
+
+        self._config = config
+        self._composition = CompositionSnapshot(self.generation, config)
+
+    @property
+    def composition(self) -> Any:
+        return self._composition
+
     def register_workflow(self, workflow: Any, expose: bool = True) -> None:
         if workflow.name in self._workflows:
             raise ComponentLifecycleError("workflow already registered: {}".format(workflow.name))
@@ -357,12 +389,15 @@ class Runtime:
         started = []
         attempted = []
         try:
-            for component in self._components.values():
+            selected = self._selected_component_names()
+            for name in selected:
+                component = self._components[name]
                 attempted.append(component)
                 await component.start(self)
                 started.append(component)
                 for spec in component.capabilities:
                     self._providers.setdefault(spec.name, []).append((component, spec))
+            self._started_component_names = tuple(component.name for component in started)
             self._started = True
             self.logger.emit("info", "runtime_started", "runtime started")
         except Exception as exc:
@@ -376,6 +411,7 @@ class Runtime:
                 except Exception:
                     pass
             self._providers.clear()
+            self._started_component_names = ()
             raise ComponentLifecycleError("runtime start failed: {}".format(type(exc).__name__)) from exc
 
     async def stop(self) -> None:
@@ -388,7 +424,8 @@ class Runtime:
                 active_tasks.append(run._task)
         if active_tasks:
             await asyncio.gather(*active_tasks, return_exceptions=True)
-        for component in reversed(tuple(self._components.values())):
+        for name in reversed(self._started_component_names):
+            component = self._components[name]
             try:
                 await component.stop()
             except Exception as exc:
@@ -410,12 +447,14 @@ class Runtime:
                     fields={"error_type": type(exc).__name__},
                 )
         self._providers.clear()
+        self._started_component_names = ()
         self._started = False
         self.logger.emit("info", "runtime_stopped", "runtime stopped")
 
     def resolve(self, requirement: Union[str, CapabilityRequirement]) -> ProviderBinding:
         if isinstance(requirement, str):
             requirement = CapabilityRequirement(requirement)
+        requirement = self._configured_requirement(requirement)
         candidates = list(self._providers.get(requirement.name, ()))
         if not candidates:
             raise CapabilityNotFoundError("no provider for capability {}".format(requirement.name))
@@ -507,6 +546,26 @@ class Runtime:
                 workflow = self._workflows[workflow]
             except KeyError as exc:
                 raise KeyError("unknown workflow: {}".format(workflow)) from exc
+        if self._config is not None and self._config.workflow_names is not None:
+            if workflow.name not in self._config.workflow_names:
+                raise ConfigurationError("workflow is not enabled: {}".format(workflow.name))
         run = WorkflowRun(self, Scope(logger=self.logger), workflow.name)
         return await run.execute(workflow, value, timeout=timeout)
+
+    def _selected_component_names(self) -> Tuple[str, ...]:
+        if self._config is None or self._config.component_names is None:
+            return tuple(self._components)
+        return self._config.component_names
+
+    def _configured_requirement(self, requirement: CapabilityRequirement) -> CapabilityRequirement:
+        if self._config is None:
+            return requirement
+        configured = self._config.bindings.get(requirement.name)
+        if configured is None:
+            return requirement
+        return CapabilityRequirement(
+            requirement.name,
+            requirement.version if requirement.version is not None else configured.version,
+            requirement.provider if requirement.provider is not None else configured.provider,
+        )
 

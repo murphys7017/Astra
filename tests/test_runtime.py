@@ -2,19 +2,23 @@ import asyncio
 import unittest
 
 from astra import (
+    CallableWorkflow,
     CapabilityAmbiguousError,
     CapabilityNotFoundError,
     CapabilityRequirement,
     CapabilitySpec,
     CapabilityVersionError,
+    Event,
+    EventBus,
     FunctionComponent,
     MemoryLogSink,
+    ParallelWorkflow,
     RouteWorkflow,
     Runtime,
     SerialWorkflow,
     StructuredLogger,
+    Scope,
     WorkflowComponent,
-    WorkflowContext,
 )
 from astra.execution import Component
 
@@ -138,6 +142,59 @@ class RuntimeTests(unittest.TestCase):
 
         self.run_async(scenario())
 
+    def test_parallel_workflow_joins_results_in_declaration_order(self):
+        async def scenario():
+            async def first(context, value):
+                await asyncio.sleep(0.01)
+                return value + "-first"
+
+            async def second(context, value):
+                return value + "-second"
+
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            workflow = ParallelWorkflow(
+                "parallel",
+                [CallableWorkflow("first", first), CallableWorkflow("second", second)],
+            )
+            await runtime.start()
+            self.assertEqual(await runtime.run_workflow(workflow, "value"), ["value-first", "value-second"])
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_event_subscriptions_are_scope_bound_and_trigger_workflow(self):
+        async def scenario():
+            logger = StructuredLogger([MemoryLogSink()])
+            bus = EventBus(logger)
+            scope = Scope()
+            seen = []
+            bus.subscribe("fact", lambda event: seen.append(event.payload), scope=scope)
+            bus.subscribe("fact", lambda event: (_ for _ in ()).throw(RuntimeError("isolated")))
+            await bus.publish(Event("fact", 1))
+            self.assertEqual(seen, [1])
+            await scope.close()
+            await bus.publish(Event("fact", 2))
+            self.assertEqual(seen, [1])
+
+            runtime = Runtime(logger)
+            received = asyncio.Event()
+
+            async def record(context, value):
+                self.assertEqual(value, {"value": 3})
+                received.set()
+                return value
+
+            workflow = CallableWorkflow("event-workflow", record)
+            trigger_scope = Scope()
+            bus.subscribe_workflow("trigger", workflow, runtime, scope=trigger_scope)
+            await runtime.start()
+            await bus.publish(Event("trigger", {"value": 3}))
+            await asyncio.wait_for(received.wait(), timeout=1)
+            await trigger_scope.close()
+            await runtime.stop()
+
+        self.run_async(scenario())
+
     def test_component_lifecycle_and_scope_cleanup(self):
         async def scenario():
             events = []
@@ -188,3 +245,5 @@ class RuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    Event,
+    EventBus,

@@ -1,12 +1,19 @@
 """Astra's minimal, local component runtime."""
 
 from .contracts import CapabilityRequirement, CapabilitySpec, InvocationMode, SideEffect
+from .config import CompositionSnapshot, RuntimeConfig, SecretValue
+from .events import Event, EventBus, EventSubscription
 from .errors import (
     AstraError,
     CapabilityAmbiguousError,
     CapabilityNotFoundError,
     CapabilityVersionError,
     ComponentLifecycleError,
+    ConfigurationError,
+    PluginDependencyError,
+    PluginError,
+    PluginManifestError,
+    SensitiveConfigurationError,
     WorkflowError,
 )
 from .execution import (
@@ -21,10 +28,12 @@ from .execution import (
     WorkflowRun,
 )
 from .logging import LogRecord, MemoryLogSink, StructuredLogger
+from .plugins import LoadedPlugin, PluginLoader, PluginManifest
 from .workflow import (
     CallableWorkflow,
     ChildWorkflow,
     RouteWorkflow,
+    ParallelWorkflow,
     SerialWorkflow,
     WorkflowContext,
     WorkflowDefinition,
@@ -42,19 +51,34 @@ __all__ = [
     "ChildWorkflow",
     "Component",
     "ComponentLifecycleError",
+    "CompositionSnapshot",
+    "ConfigurationError",
+    "Event",
+    "EventBus",
+    "EventSubscription",
     "FunctionComponent",
     "Invocation",
     "InvocationMode",
     "InvocationState",
     "LogRecord",
     "MemoryLogSink",
+    "LoadedPlugin",
+    "PluginDependencyError",
+    "PluginError",
+    "PluginLoader",
+    "PluginManifest",
+    "PluginManifestError",
     "ProviderBinding",
     "RouteWorkflow",
+    "ParallelWorkflow",
     "RunState",
     "Runtime",
+    "RuntimeConfig",
     "Scope",
     "SerialWorkflow",
     "SideEffect",
+    "SecretValue",
+    "SensitiveConfigurationError",
     "StructuredLogger",
     "WorkflowComponent",
     "WorkflowContext",

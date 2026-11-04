@@ -1,7 +1,7 @@
 """Explicit Python workflow composition primitives."""
 
-import inspect
-from typing import Any, Awaitable, Callable, Iterable, List, Optional, Sequence, Tuple
+import asyncio
+from typing import Any, Callable, Iterable, Optional, Sequence, Tuple
 
 from .contracts import CapabilitySpec
 from .errors import WorkflowError
@@ -21,6 +21,7 @@ class WorkflowDefinition:
 class WorkflowContext:
     def __init__(self, run: WorkflowRun) -> None:
         self.run = run
+        self.params = run.parameters
 
     async def invoke(self, capability: Any, request: Any, timeout: Optional[float] = None) -> Any:
         self.run.scope.raise_if_cancelled()
@@ -81,6 +82,27 @@ class RouteWorkflow(WorkflowDefinition):
         if self._fallback is not None:
             return await context.child(self._fallback, value)
         raise WorkflowError("route workflow {} has no matching branch".format(self.name))
+
+
+class ParallelWorkflow(WorkflowDefinition):
+    """Run child workflows concurrently and return results in declaration order."""
+
+    def __init__(self, name: str, branches: Iterable[WorkflowDefinition]) -> None:
+        super().__init__(name)
+        self._branches = tuple(branches)
+        if not self._branches:
+            raise ValueError("parallel workflow must contain at least one branch")
+
+    async def execute(self, context: WorkflowContext, value: Any) -> Any:
+        tasks = [asyncio.create_task(context.child(branch, value)) for branch in self._branches]
+        try:
+            return await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
 
 class ChildWorkflow(WorkflowDefinition):

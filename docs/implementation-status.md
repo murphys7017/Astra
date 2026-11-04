@@ -1,6 +1,6 @@
 # Astra 实现状态
 
-**状态**：Stage 1 首轮实现进行中  
+**状态**：Stage 4 首轮实现进行中
 **日期**：2026-11-05
 
 ## 已实现
@@ -17,7 +17,12 @@
 - 路由 Workflow 和子 Workflow 调用；
 - Workflow 作为 Workflow Component 对外提供 Capability；
 - 统一结构化日志入口、内存 Sink 和最小备用 Sink；
-- 日志 Sink 故障隔离、字段脱敏和长度限制。
+- 日志 Sink 故障隔离、字段脱敏和长度限制；
+- JSON RuntimeConfig 的结构校验、敏感配置边界和不可变 Composition Snapshot；
+- 可信本地 Plugin Manifest 发现、入口加载、依赖排序和注册事务回滚；
+- JSON 选择启用组件、Workflow 和 Capability Provider Binding。
+- 并行 Workflow 的结果汇合；
+- Scope 绑定的内存 EventBus 和事件触发 Workflow。
 
 ## 当前验证
 
@@ -28,16 +33,13 @@ python -m unittest discover -s tests -v
 python -m compileall -q astra tests
 ```
 
-当前测试覆盖组件生命周期、Capability 歧义绑定、串行和路由 Workflow、子 Workflow、Workflow Component、日志故障隔离、敏感字段脱敏以及超时收束。
+当前测试覆盖组件生命周期、Capability 歧义绑定、串行和路由 Workflow、子 Workflow、Workflow Component、日志故障隔离、敏感字段脱敏、超时收束、JSON 配置和临时本地插件加载。
 
 ## 尚未实现
 
 以下内容按开发计划保留在后续阶段：
 
-- JSON 运行配置和组合快照加载；
-- 离线 Plugin Manifest 发现和载入；
-- Stream、EventBus 和更完整的 Control 语义；
-- 并行、Pipeline、事件触发和结果汇合；
+- Stream、Pipeline 和更完整的 Control 语义；
 - 资源限制、背压和更完整的故障策略；
 - 性能基线和热路径测量；
 - 外部模块自动适配。
