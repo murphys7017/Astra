@@ -22,7 +22,7 @@ Microkernel 不直接负责：
 - Persona 规则和表达策略；
 - Prompt 组织、Memory 检索和 Knowledge 语义；
 - Agent Loop、Planner 或具体 Router 算法；
-- TTS、Motion、Live2D 逐帧计算和播放时钟；
+- 音频、图像、设备逐帧计算和播放时钟；
 - 具体平台、设备或消息协议；
 - 领域副作用的业务补偿逻辑；
 - 某种固定的聊天、任务或主动行为流程。
@@ -69,16 +69,19 @@ Workflow 是能力组合，不是内核预设的业务流程。它可以调用 C
 - Component、Capability、Scope、Run、Invocation 和生命周期；
 - Invoke、Stream、Router 和内存 EventBus；
 - 取消、权限拒绝、资源清理和迟到结果隔离；
-- 至少两种能力提供者和多条可组合 Workflow。
+- 至少两种能力提供者和多条可组合 Workflow；
+- 可信本地插件的离线载入；
+- 使用 JSON 表达当前组合、绑定和运行参数；
+- 统一日志数据入口和最小备用输出。
 
 暂缓到后续阶段：
 
 - HTTP、WebSocket、IPC 和 Android Host；
 - 服务发现、分布式调度和持久化任务；
 - Workflow DSL、IR 和可视化编辑器；
-- AstrBot 兼容层；
+- 外部项目兼容层和自动适配层；
 - 热重载和完整插件市场；
-- AG99 或 AG99live 的整体迁移。
+- 任何外部项目的整体迁移。
 
 ## 必须守住的不变量
 
@@ -89,5 +92,5 @@ Workflow 是能力组合，不是内核预设的业务流程。它可以调用 C
 5. Scope 停止后，其订阅、后台任务和运行时资源可以清理。
 6. 事件不会被隐式当成命令，调用关系需要可追踪。
 7. 缺失能力、权限拒绝和 Provider 歧义应确定性失败。
-8. 内核不依赖 AG99、AstrBot、AG99live、DeepSeek Harness 或 Live2D 的具体类型。
+8. 内核不依赖任何外部项目、平台或设备的具体类型。
 

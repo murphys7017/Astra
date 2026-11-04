@@ -17,12 +17,12 @@
 | Event | 已发生的不可变事实通知 | 不隐含要求订阅者执行动作 |
 | Router | 根据输入和上下文选择后续路径的能力 | 不自动拥有工具权限或执行职责 |
 | Control | 改变执行状态的请求 | 是否支持由具体契约决定 |
-| Profile / Application | 一组组件、能力绑定和工作流的具体组合 | 不等于 Runtime 本身 |
+| Application / Composition | 一组组件、能力绑定和工作流的当前运行组合 | 不等于 Runtime 本身；Profile 管理不属于第一阶段 |
 
 ## 关系图
 
 ```text
-Application / Profile
+Application / Composition
         |
         v
 Component --provides--> Capability

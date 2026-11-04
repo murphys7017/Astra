@@ -10,11 +10,11 @@ Astra 需要支持插件离线载入、Workflow 作为 Component，以及消息�
 
 ## 决策
 
-1. 每个 Workflow Run 固定自己的 Workflow Definition、Profile Generation 和能力绑定策略。
+1. 每个 Workflow Run 固定自己的 Workflow Definition、Composition Generation 和能力绑定策略。
 2. 每个 Invocation 固定自己的 Provider Binding。
 3. 插件更新、配置变化和 Provider 替换只影响新的 Run。
 4. 旧 Generation 进入排空状态，等待现有 Run 结束后再停止和释放。
-5. 插件发现、依赖解析、组件启动和 Profile 重组不进入消息热路径。
+5. 插件发现、依赖解析、组件启动和 Composition 重组不进入消息热路径。
 6. 同进程调用优先使用已解析的本地绑定，避免重复扫描、重复序列化和隐式事件转发。
 7. Token、音频分块和逐帧表现不默认经过 EventBus 或 Kernel 调度。
 8. 外部项目适配属于底座之上的独立层，不改变 Kernel 的核心契约。

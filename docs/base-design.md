@@ -46,7 +46,7 @@ Plugin Package
 
 ```mermaid
 flowchart TB
-    A[Application / Profile]
+    A[Application / Composition Input]
     W[Workflow Composition]
     C[Domain Components]
     K[Astra Runtime Kernel]
@@ -72,7 +72,7 @@ Workflow 负责选择能力、组织顺序、传递数据、处理分支和决�
 
 ### Application 层
 
-Application 或 Profile 选择 Component、建立 Capability Binding，并决定哪些 Workflow 参与运行。不同 Application 可以共用同一个 Runtime。
+Application 或外置组合输入选择 Component、建立 Capability Binding，并决定哪些 Workflow 参与运行。不同组合可以共用同一个 Runtime。可管理的 Profile、配置编辑器和用户级配置不属于第一阶段。
 
 ## 3. 核心对象关系
 
@@ -122,9 +122,9 @@ Invocation 表示一次明确的 Capability 调用，拥有 `invocation_id`、�
 
 ### Provider Binding
 
-一次 Workflow Run 开始后，应固定它使用的 Workflow Definition、Profile Generation 和能力绑定策略。一次 Invocation 开始后，应固定其 Provider Binding。运行期间的 Provider 替换不改变已经开始的调用；新的调用也不能越过当前 Run 的 Generation 使用新的组合。
+一次 Workflow Run 开始后，应固定它使用的 Workflow Definition、Composition Generation 和能力绑定策略。一次 Invocation 开始后，应固定其 Provider Binding。运行期间的 Provider 替换不改变已经开始的调用；新的调用也不能越过当前 Run 的 Generation 使用新的组合。
 
-插件更新、Provider 替换或 Workflow 修改会产生新的 Profile Generation。新 Generation 只服务新的 Run，旧 Generation 进入排空状态，等待现有 Run 结束后再停止和释放。
+插件更新、Provider 替换或 Workflow 修改会产生新的 Composition Generation。它只是 Runtime 内部的不可变执行代际，不是需要用户管理的 Profile 子系统。新 Generation 只服务新的 Run，旧 Generation 进入排空状态，等待现有 Run 结束后再停止和释放。
 
 ## 4. 身份与所有权
 
@@ -261,7 +261,7 @@ Runtime 停止只能清理 Managed Resource，不能假定 External Effect 可�
 
 ## 9.1 性能与热路径约束
 
-插件发现、Manifest 读取、依赖解析、组件启动和 Profile 重组属于启动或管理路径，不应在每条消息的热路径中重复执行。
+插件发现、Manifest 读取、依赖解析、组件启动和 Composition 重组属于启动或管理路径，不应在每条消息的热路径中重复执行。
 
 同进程的本地调用优先使用已经解析并固定的能力绑定，避免重复扫描 Registry、重复序列化和不必要的跨层消息转换。EventBus 不用于传递每个 Token、音频分块或逐帧表现数据。
 
@@ -285,7 +285,7 @@ Runtime 额外开销应有明确预算，第一阶段只要求能够单独测量
 - 单进程、本地 Python；
 - 本地插件或内置组件的离线发现和载入；
 - 内存中的 Registry、Resolver 和 EventBus；
-- 代码定义的 Workflow；
+- 代码定义的 Workflow，以及用于选择组合和参数的最小 JSON 运行配置；
 - Workflow 作为 Workflow Component 对外提供 Capability；
 - 两个 Provider 提供同一 Capability；
 - Invoke、Stream、Route、Event 和 Control 的最小语义；
@@ -298,7 +298,7 @@ Runtime 额外开销应有明确预算，第一阶段只要求能够单独测量
 - 分布式一致性、服务发现和持久化事件；
 - Workflow DSL、IR 和图形编辑器；
 - Agent、Persona、Memory 和其他具体领域模型；
-- AstrBot 兼容层和完整插件市场。
+- 外部项目兼容层、自动适配层和完整插件市场。
 
 外部项目的自动包装或手工适配属于后续适配层。适配层可以把已有模块包装为 Component 和 Capability，但不应反向改变底座的核心契约。
 
