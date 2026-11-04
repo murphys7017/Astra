@@ -1,0 +1,33 @@
+# Astra
+
+Astra 是一个以 Component 和 Capability 为基础的可组合智能系统运行时。
+
+开发者可以自由组织 Workflow。Workflow 可以消费其他组件提供的能力，也可以作为 Component 对外提供能力，并通过显式调用、流式连接、路由决策和事件通知进行协作。
+
+当前仓库处于**项目设计阶段**：先确定边界、术语和验证目标，暂不设计具体实现代码。
+
+## 当前基线
+
+- Python 是首选实现语言。
+- 第一阶段只考虑单进程、本地执行。
+- Component 是装载、替换和生命周期管理单位。
+- Capability 是组件之间的稳定契约。
+- Workflow 是能力组合，可以自身成为 Component。
+- Runtime 负责通用运行机制，不负责具体智能业务。
+- AG99、AG99live、AstrBot、Cordis 和 DeepSeek Harness 是参考来源，不是运行时依赖。
+
+## 文档入口
+
+- [项目愿景](docs/vision.md)：Astra 要解决的问题和长期方向。
+- [设计边界](docs/boundaries.md)：内核、组件、能力、工作流和事件的责任边界。
+- [底座设计基线](docs/base-design.md)：核心对象、执行语义、生命周期、权限和第一阶段范围。
+- [设计验收表](docs/acceptance.md)：进入实现阶段前需要满足的设计条件。
+- [核心术语](docs/terms.md)：当前统一词汇及其关系。
+- [文档规划与路线](docs/roadmap.md)：文档阶段、验证阶段和暂缓事项。
+- [架构决策](docs/decisions/ADR-0001-document-first.md)：为什么先做文档和边界设计。
+- [Vision 1.1 原文归档](docs/reference/vision-1.1.md)：用户提供的完整基线文档。
+
+## 当前不承诺
+
+本仓库尚未冻结 Python API、序列化格式、远程协议、Workflow DSL、插件兼容层或分布式调度模型。任何公共接口都应先经过用例、边界和验证标准的审查。
+
