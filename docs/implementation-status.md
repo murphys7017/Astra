@@ -1,0 +1,45 @@
+# Astra 实现状态
+
+**状态**：Stage 1 首轮实现进行中  
+**日期**：2026-11-05
+
+## 已实现
+
+当前实现是标准库优先的单进程、本地异步 Runtime，位于仓库根目录的 `astra/` 包中。
+
+- Component 的注册、启动、停止和释放；
+- CapabilitySpec、CapabilityRequirement 和 Provider 解析；
+- 缺失能力、版本不匹配和 Provider 歧义的确定性失败；
+- Scope 的父子关系、取消信号和逆序清理；
+- Workflow Run、Invocation、Provider Binding 和基础终态；
+- 一次 Run 内固定组合代际和 Provider Binding；
+- Python 显式定义的串行 Workflow；
+- 路由 Workflow 和子 Workflow 调用；
+- Workflow 作为 Workflow Component 对外提供 Capability；
+- 统一结构化日志入口、内存 Sink 和最小备用 Sink；
+- 日志 Sink 故障隔离、字段脱敏和长度限制。
+
+## 当前验证
+
+使用以下命令验证：
+
+```powershell
+python -m unittest discover -s tests -v
+python -m compileall -q astra tests
+```
+
+当前测试覆盖组件生命周期、Capability 歧义绑定、串行和路由 Workflow、子 Workflow、Workflow Component、日志故障隔离、敏感字段脱敏以及超时收束。
+
+## 尚未实现
+
+以下内容按开发计划保留在后续阶段：
+
+- JSON 运行配置和组合快照加载；
+- 离线 Plugin Manifest 发现和载入；
+- Stream、EventBus 和更完整的 Control 语义；
+- 并行、Pipeline、事件触发和结果汇合；
+- 资源限制、背压和更完整的故障策略；
+- 性能基线和热路径测量；
+- 外部模块自动适配。
+
+当前代码没有引入具体模型、平台、设备或外部项目兼容逻辑。
