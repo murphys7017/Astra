@@ -73,7 +73,9 @@ Workflow 内部仍使用 Python 进行显式编排。RuntimeConfig 可以把已�
 - 可信本地插件的离线载入；
 - 使用 JSON 表达当前组合、绑定和运行参数；
 - 执行已注册 Workflow 的有限 JSON composition；
-- 统一日志数据入口和最小备用输出。
+- 统一日志数据入口和最小备用输出；
+- 配置级 Composition Generation 切换、旧代际排空和失败回滚；
+- 并行子任务、EventBus 待处理任务和日志 Sink 的最小资源边界。
 
 暂缓到后续阶段：
 
@@ -81,8 +83,8 @@ Workflow 内部仍使用 Python 进行显式编排。RuntimeConfig 可以把已�
 - 服务发现、分布式调度和持久化任务；
 - Workflow DSL、IR 和可视化编辑器；
 - 外部项目兼容层和自动适配层；
-- 热重载和完整插件市场；
-- 运行时资源限制、背压和完整 Control；
+- 插件组件集合的热替换、完整插件市场和组件生命周期协同；
+- 更复杂的资源策略、Stream 缓存策略和完整 Control；
 - 任何外部项目的整体迁移。
 
 ## 必须守住的不变量
