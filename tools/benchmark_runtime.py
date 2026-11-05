@@ -52,10 +52,21 @@ async def measure(iterations: int) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=1000)
+    parser.add_argument(
+        "--max-overhead-us",
+        type=float,
+        default=None,
+        help="fail with exit code 2 when runtime overhead exceeds this threshold",
+    )
     args = parser.parse_args()
     if args.iterations < 1:
         parser.error("--iterations must be positive")
-    print(json.dumps(asyncio.run(measure(args.iterations)), indent=2))
+    if args.max_overhead_us is not None and args.max_overhead_us < 0:
+        parser.error("--max-overhead-us must not be negative")
+    result = asyncio.run(measure(args.iterations))
+    print(json.dumps(result, indent=2))
+    if args.max_overhead_us is not None and result["runtime_overhead_us"] > args.max_overhead_us:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

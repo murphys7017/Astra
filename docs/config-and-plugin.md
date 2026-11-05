@@ -15,11 +15,14 @@ RuntimeConfig 接受一个 JSON 对象，当前支持：
 - `composition.parallel`：并行 Workflow 名称组；
 - `composition.branches`：Workflow 之间的分支关系描述；
 - `permissions`：当前组合的权限元数据；
+- `resources.max_concurrent_children`：单个 Run 允许同时运行的子 Workflow 上限；
 - `secrets`：密钥引用或受保护的内联密钥。
 
 JSON 只选择当前组合和参数，不定义组件内部行为，也不取代 Python Workflow 的执行语义。Runtime 在启动前校验组件、Workflow、绑定和组合引用，并生成不可变 Composition Snapshot。调用 `runtime.run_composition(...)` 时，`composition.order` 作为串行执行顺序，`composition.parallel` 中的连续成员以同一输入并行执行并按声明顺序汇合，`composition.branches` 作为无条件的单出边跳转。条件路由仍由 Python `RouteWorkflow` 提供，JSON 不因此变成完整 Workflow DSL。
 
 并行组必须完整出现在 `composition.order` 的连续位置，不能互相重叠；分支图不能有环，也不能从同一个 Workflow 声明多条出边。分支不能从或指向并行组内部成员，只能以并行组的首节点作为跳转点。组合入口会固定当前已注册 Workflow 和 Composition Generation，运行中不会替换其中的成员。
+
+资源配置当前支持 `resources.max_concurrent_children`。它限制同一 Run Scope 下并行子 Workflow 的数量，额度耗尽时新的子 Workflow 等待，Scope 取消会中断等待。EventBus 也支持有限的待处理异步订阅，超过上限的事件处理会被丢弃并记录诊断。
 
 最小调用方式如下：
 
@@ -86,4 +89,4 @@ await runtime.start()
 
 这段顺序体现了当前边界：插件负责提供 Component，JSON 负责选择组合，Runtime 负责启动和执行。
 
-配置只允许在 Runtime 启动前应用。运行过程中不支持热更新；每个 Runtime 实例使用一个固定的 Composition Generation。未来需要热更新时，必须通过新的 Generation 和排空流程实现。
+配置通常在 Runtime 启动前应用。Runtime 启动后可以通过 `reload_config(...)` 校验并发布新的配置 Generation，切换只影响新的 Run，旧 Run 继续使用原代际并在结束后排空。组件集合、插件载入和组件生命周期不在这条配置切换路径中改变。

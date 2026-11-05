@@ -29,6 +29,7 @@ class CapabilitySpec:
     input_type: Optional[str] = None
     output_type: Optional[str] = None
     retry_safe: bool = False
+    idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -53,6 +54,14 @@ class CapabilitySpec:
         object.__setattr__(self, "permissions", permissions)
         if not isinstance(self.retry_safe, bool):
             raise ValueError("capability retry_safe must be a boolean")
+        if self.idempotency_key is not None and (
+            not isinstance(self.idempotency_key, str) or not self.idempotency_key.strip()
+        ):
+            raise ValueError("capability idempotency_key must be a non-empty string")
+        if self.side_effect == SideEffect.EXTERNAL_EFFECT and self.retry_safe and self.idempotency_key is None:
+            raise ValueError(
+                "external-effect capabilities marked retry_safe require an idempotency_key"
+            )
 
 
 @dataclass(frozen=True)

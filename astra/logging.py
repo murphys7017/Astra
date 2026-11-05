@@ -86,8 +86,8 @@ class NonBlockingLogSink:
     """Bounded queue wrapper that keeps slow sinks out of the execution path."""
 
     def __init__(self, sink: LogSink, maxsize: int = 1024) -> None:
-        if maxsize < 1:
-            raise ValueError("maxsize must be positive")
+        if isinstance(maxsize, bool) or not isinstance(maxsize, int) or maxsize < 1:
+            raise ValueError("maxsize must be a positive integer")
         self.sink = sink
         self._queue = queue.Queue(maxsize=maxsize)
         self._sentinel = object()

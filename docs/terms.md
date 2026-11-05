@@ -19,7 +19,7 @@
 | Control | 改变执行状态的请求 | 是否支持由具体契约决定 |
 | Application / Composition | 一组组件、能力绑定和工作流的当前运行组合 | 不等于 Runtime 本身；Profile 管理不属于第一阶段 |
 | Configured Workflow | 由 RuntimeConfig 选择并固定执行关系的 Workflow | 只引用已注册 Workflow，不定义组件步骤或条件表达式 |
-| Composition Generation | 一次固定的运行组合代际 | 当前在启动前生成；热更新和旧代际排空属于后续阶段 |
+| Composition Generation | 一次固定的运行组合代际 | 启动或配置重载时生成；新 Run 使用新代际，旧代际在 active Run 清零后排空 |
 
 ## 关系图
 

@@ -75,6 +75,10 @@ class ConfigAndPluginTests(unittest.TestCase):
             RuntimeConfig.from_dict({"workflows": [{"name": "same"}, {"name": "same", "enabled": False}]})
         with self.assertRaises(SensitiveConfigurationError):
             RuntimeConfig.from_dict({"permissions": {"secrets": {"api_key": "raw"}}})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"resources": {"max_concurrent_children": 0}})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"resources": {"max_concurrent_children": True}})
         inline = RuntimeConfig.from_dict(
             {"secrets": {"api_key": {"value": "TOP-SECRET", "protected": True}}}
         )
@@ -253,6 +257,109 @@ class ConfigAndPluginTests(unittest.TestCase):
             with self.assertRaises(PermissionDeniedError):
                 await runtime.run_workflow(workflow, None)
             self.assertEqual(called, [])
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_reload_keeps_old_run_bindings_and_parameters(self):
+        async def scenario():
+            started = asyncio.Event()
+            release = asyncio.Event()
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_component(FunctionComponent("provider-a", {"echo": lambda request, inv: "a:" + request}))
+            runtime.register_component(FunctionComponent("provider-b", {"echo": lambda request, inv: "b:" + request}))
+
+            async def hold(context, value):
+                started.set()
+                tag = context.params["tag"]
+                if tag == "old":
+                    await release.wait()
+                return tag + ":" + await context.invoke("echo", value)
+
+            workflow = SerialWorkflow("hold", [hold])
+            runtime.register_workflow(workflow)
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "hold", "params": {"tag": "old"}}],
+                        "bindings": {"echo": {"provider": "provider-a"}},
+                    }
+                )
+            )
+            await runtime.start()
+            old_task = asyncio.create_task(runtime.run_workflow("hold", "value"))
+            await asyncio.wait_for(started.wait(), timeout=1)
+
+            runtime.reload_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "hold", "params": {"tag": "new"}}],
+                        "bindings": {"echo": {"provider": "provider-b"}},
+                    }
+                )
+            )
+            self.assertEqual(runtime.generation, 2)
+            self.assertEqual(await runtime.run_workflow("hold", "value"), "new:b:value")
+            release.set()
+            self.assertEqual(await old_task, "old:a:value")
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_reload_failure_keeps_current_generation(self):
+        async def scenario():
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_component(FunctionComponent("provider", {"echo": lambda request, inv: request}))
+            runtime.register_workflow(SerialWorkflow("main", [lambda context, value: context.invoke("echo", value)]))
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "main"}],
+                        "bindings": {"echo": {"provider": "provider"}},
+                    }
+                )
+            )
+            await runtime.start()
+            before = runtime.composition
+            with self.assertRaises(ConfigurationError):
+                runtime.reload_config(
+                    RuntimeConfig.from_dict(
+                        {
+                            "components": ["missing"],
+                            "workflows": [{"name": "main"}],
+                        }
+                    )
+                )
+            self.assertEqual(runtime.generation, 1)
+            self.assertEqual(runtime.generations, (1,))
+            self.assertIs(runtime.composition, before)
+            self.assertEqual(await runtime.run_workflow("main", "ok"), "ok")
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_retired_generation_is_released_after_old_run_finishes(self):
+        async def scenario():
+            started = asyncio.Event()
+            release = asyncio.Event()
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+
+            async def hold(context, value):
+                started.set()
+                await release.wait()
+                return value
+
+            workflow = SerialWorkflow("hold", [hold])
+            runtime.register_workflow(workflow)
+            runtime.apply_config(RuntimeConfig.from_dict({"workflows": [{"name": "hold"}]}))
+            await runtime.start()
+            old_task = asyncio.create_task(runtime.run_workflow("hold", "value"))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            runtime.reload_config(RuntimeConfig.from_dict({"workflows": [{"name": "hold"}]}))
+            self.assertEqual(runtime.generations, (1, 2))
+            release.set()
+            self.assertEqual(await old_task, "value")
+            self.assertEqual(runtime.generations, (2,))
             await runtime.stop()
 
         self.run_async(scenario())

@@ -1,7 +1,7 @@
 """The minimal local execution kernel."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import inspect
 import uuid
@@ -83,7 +83,12 @@ class InvocationState(str, Enum):
 class Scope:
     """A cancellation, ownership and cleanup boundary."""
 
-    def __init__(self, parent: Optional["Scope"] = None, logger: Optional[StructuredLogger] = None) -> None:
+    def __init__(
+        self,
+        parent: Optional["Scope"] = None,
+        logger: Optional[StructuredLogger] = None,
+        max_concurrent_children: Optional[int] = None,
+    ) -> None:
         self.scope_id = _new_id("scope")
         self.parent = parent
         self._logger = logger or (parent._logger if parent is not None else None)
@@ -91,6 +96,20 @@ class Scope:
         self._closed = False
         self._children: Set[Scope] = set()
         self._cleanups = []
+        if max_concurrent_children is None and parent is not None:
+            max_concurrent_children = parent._max_concurrent_children
+        if max_concurrent_children is not None and (
+            isinstance(max_concurrent_children, bool)
+            or not isinstance(max_concurrent_children, int)
+            or max_concurrent_children < 1
+        ):
+            raise ValueError("max_concurrent_children must be a positive integer")
+        self._max_concurrent_children = max_concurrent_children
+        self._child_slots = (
+            asyncio.Semaphore(max_concurrent_children)
+            if max_concurrent_children is not None
+            else None
+        )
         if parent is not None:
             parent._children.add(self)
             if parent.cancelled:
@@ -123,6 +142,42 @@ class Scope:
         if self._closed:
             raise RuntimeError("cannot add cleanup to a closed scope")
         self._cleanups.append(cleanup)
+
+    async def acquire_child_slot(self) -> bool:
+        if self._child_slots is None:
+            self.raise_if_cancelled()
+            return False
+        acquire_task = asyncio.create_task(self._child_slots.acquire())
+        cancel_task = asyncio.create_task(self.wait_cancelled())
+        acquired = False
+        completed = False
+        try:
+            done, _ = await asyncio.wait(
+                (acquire_task, cancel_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancel_task in done:
+                if acquire_task in done and not acquire_task.cancelled():
+                    acquired = acquire_task.result()
+                raise asyncio.CancelledError()
+            acquired = acquire_task.result()
+            self.raise_if_cancelled()
+            completed = True
+        finally:
+            if not acquire_task.done():
+                acquire_task.cancel()
+            if not cancel_task.done():
+                cancel_task.cancel()
+            results = await asyncio.gather(acquire_task, cancel_task, return_exceptions=True)
+            if not acquired and results[0] is True:
+                acquired = True
+            if acquired and not completed:
+                self._child_slots.release()
+        return True
+
+    def release_child_slot(self, acquired: bool) -> None:
+        if acquired and self._child_slots is not None:
+            self._child_slots.release()
 
     async def close(self) -> None:
         if self._closed:
@@ -244,6 +299,20 @@ class ProviderBinding:
     generation: int
 
 
+@dataclass
+class RuntimeGeneration:
+    """Generation-scoped execution bindings and active-run ownership."""
+
+    generation: int
+    config: Any = None
+    composition: Any = None
+    configured_workflow: Any = None
+    allowed_permissions: frozenset = frozenset()
+    max_concurrent_children: Optional[int] = None
+    active_runs: Set["WorkflowRun"] = field(default_factory=set)
+    retired: bool = False
+
+
 class Invocation:
     def __init__(self, run: "WorkflowRun", binding: ProviderBinding) -> None:
         self.invocation_id = _new_id("inv")
@@ -289,6 +358,7 @@ class WorkflowRun:
         workflow_name: str,
         parent: Optional["WorkflowRun"] = None,
         correlation_id: Optional[str] = None,
+        generation: Optional[int] = None,
     ) -> None:
         self.run_id = _new_id("run")
         self.runtime = runtime
@@ -296,7 +366,8 @@ class WorkflowRun:
         self.workflow_name = workflow_name
         self.parent = parent
         self.correlation_id = correlation_id or (parent.correlation_id if parent else _new_id("corr"))
-        self.generation = runtime.generation
+        self.generation = runtime.generation if generation is None else generation
+        self._generation_state = runtime._generation_state(self.generation)
         self.state = RunState.CREATED
         self._task: Optional[asyncio.Task] = None
 
@@ -304,6 +375,7 @@ class WorkflowRun:
         self.state = RunState.RUNNING
         self._task = asyncio.current_task()
         self.runtime._active_runs.add(self)
+        self._generation_state.active_runs.add(self)
         self.runtime.logger.emit(
             "info",
             "run_started",
@@ -383,7 +455,9 @@ class WorkflowRun:
         finally:
             self._task = None
             self.runtime._active_runs.discard(self)
+            self._generation_state.active_runs.discard(self)
             await self.scope.close()
+            self.runtime._retire_generation_if_drained(self._generation_state)
             self.runtime.logger.emit(
                 "debug",
                 "scope_released",
@@ -404,10 +478,20 @@ class WorkflowRun:
         return await self.runtime.invoke(requirement, request, run=self, timeout=timeout)
 
     async def run_child(self, workflow: Any, value: Any, timeout: Optional[float] = None) -> Any:
-        self.runtime._ensure_workflow_enabled(workflow.name)
-        child_scope = Scope(self.scope)
-        child = WorkflowRun(self.runtime, child_scope, workflow.name, parent=self)
-        return await child.execute(workflow, value, timeout=timeout)
+        self.runtime._ensure_workflow_enabled(workflow.name, generation=self.generation)
+        acquired = await self.scope.acquire_child_slot()
+        try:
+            child_scope = Scope(self.scope)
+            child = WorkflowRun(
+                self.runtime,
+                child_scope,
+                workflow.name,
+                parent=self,
+                generation=self.generation,
+            )
+            return await child.execute(workflow, value, timeout=timeout)
+        finally:
+            self.scope.release_child_slot(acquired)
 
     def cancel(self, reason: str = "cancel requested") -> None:
         if self.state in (RunState.CREATED, RunState.RUNNING):
@@ -428,9 +512,10 @@ class WorkflowRun:
 
     @property
     def parameters(self) -> Mapping[str, Any]:
-        if self.runtime._config is None:
+        config = self._generation_state.config
+        if config is None:
             return {}
-        return self.runtime._config.workflow_params.get(self.workflow_name, {})
+        return config.workflow_params.get(self.workflow_name, {})
 
 
 class Runtime:
@@ -438,7 +523,10 @@ class Runtime:
 
     def __init__(self, logger: Optional[StructuredLogger] = None) -> None:
         self.logger = logger or StructuredLogger()
-        self.generation = 1
+        self._current_generation = 1
+        self._generations: Dict[int, RuntimeGeneration] = {
+            1: RuntimeGeneration(1)
+        }
         self._components: Dict[str, Component] = {}
         self._providers: Dict[str, list] = {}
         self._workflows: Dict[str, Any] = {}
@@ -446,9 +534,20 @@ class Runtime:
         self._composition = None
         self._configured_workflow = None
         self._allowed_permissions = frozenset()
+        self._max_concurrent_children = None
         self._started = False
         self._started_component_names: Tuple[str, ...] = ()
         self._active_runs: Set[WorkflowRun] = set()
+
+    @property
+    def generation(self) -> int:
+        """Return the generation used by newly-created runs."""
+        return self._current_generation
+
+    @property
+    def generations(self) -> Tuple[int, ...]:
+        """Return currently retained generation identifiers."""
+        return tuple(sorted(self._generations))
 
     @property
     def started(self) -> bool:
@@ -482,11 +581,80 @@ class Runtime:
         configured_workflow = None
         if config.workflow_order or config.parallel_groups or config.branches:
             configured_workflow = self._compile_composed_workflow(config, "configured-composition")
-        self._config = config
-        self._composition = CompositionSnapshot(self.generation, config)
-        self._configured_workflow = configured_workflow
         allowed = config.permissions.get("allow")
-        self._allowed_permissions = frozenset() if allowed is None else frozenset(allowed)
+        allowed_permissions = frozenset() if allowed is None else frozenset(allowed)
+        max_concurrent_children = config.resources.get("max_concurrent_children")
+        state = RuntimeGeneration(
+            self._current_generation,
+            config=config,
+            composition=CompositionSnapshot(self._current_generation, config),
+            configured_workflow=configured_workflow,
+            allowed_permissions=allowed_permissions,
+            max_concurrent_children=max_concurrent_children,
+        )
+        self._generations[self._current_generation] = state
+        self._config = config
+        self._composition = state.composition
+        self._configured_workflow = configured_workflow
+        self._allowed_permissions = allowed_permissions
+        self._max_concurrent_children = max_concurrent_children
+
+    def reload_config(self, config: Any) -> None:
+        """Validate and publish a new config generation without interrupting old runs.
+
+        Components and workflows remain fixed after startup. A reload changes only
+        generation-scoped composition, bindings, permissions, parameters, and
+        resource policy.
+        """
+        if not self._started:
+            raise ConfigurationError("configuration reload requires a started runtime")
+        previous = self._generations[self._current_generation]
+        previous_config = previous.config
+        if previous_config is not None:
+            if config.plugin_refs != previous_config.plugin_refs:
+                raise ConfigurationError("configuration reload cannot change plugin selection")
+            if config.component_names != previous_config.component_names:
+                raise ConfigurationError("configuration reload cannot change component selection")
+        elif config.plugin_refs or config.component_names is not None:
+            raise ConfigurationError("configuration reload cannot add plugin or component selection")
+        config.validate_registered(self._components, self._workflows)
+        selected = config.component_names
+        selected_names = tuple(self._components) if selected is None else tuple(selected)
+        started_names = set(self._started_component_names)
+        if any(name not in started_names for name in selected_names):
+            raise ConfigurationError("configuration reload cannot add components after runtime start")
+        configured_workflow = None
+        if config.workflow_order or config.parallel_groups or config.branches:
+            configured_workflow = self._compile_composed_workflow(config, "configured-composition")
+        allowed = config.permissions.get("allow")
+        allowed_permissions = frozenset() if allowed is None else frozenset(allowed)
+        max_concurrent_children = config.resources.get("max_concurrent_children")
+        next_generation = self._current_generation + 1
+        from .config import CompositionSnapshot
+
+        state = RuntimeGeneration(
+            next_generation,
+            config=config,
+            composition=CompositionSnapshot(next_generation, config),
+            configured_workflow=configured_workflow,
+            allowed_permissions=allowed_permissions,
+            max_concurrent_children=max_concurrent_children,
+        )
+        previous.retired = True
+        self._generations[next_generation] = state
+        self._current_generation = next_generation
+        self._config = config
+        self._composition = state.composition
+        self._configured_workflow = configured_workflow
+        self._allowed_permissions = allowed_permissions
+        self._max_concurrent_children = max_concurrent_children
+        self.logger.emit(
+            "info",
+            "generation_published",
+            "runtime configuration generation published",
+            fields={"generation": next_generation, "previous_generation": previous.generation},
+        )
+        self._retire_generation_if_drained(previous)
 
     @property
     def composition(self) -> Any:
@@ -535,12 +703,14 @@ class Runtime:
     async def stop(self) -> None:
         if not self._started:
             return
-        active_tasks = []
-        for run in tuple(self._active_runs):
-            run.cancel("runtime stopping")
-            if run._task is not None:
-                active_tasks.append(run._task)
-        if active_tasks:
+        while self._active_runs:
+            active_tasks = []
+            for run in tuple(self._active_runs):
+                run.cancel("runtime stopping")
+                if run._task is not None:
+                    active_tasks.append(run._task)
+            if not active_tasks:
+                break
             await asyncio.gather(*active_tasks, return_exceptions=True)
         for name in reversed(self._started_component_names):
             component = self._components[name]
@@ -576,7 +746,8 @@ class Runtime:
     ) -> ProviderBinding:
         if isinstance(requirement, str):
             requirement = CapabilityRequirement(requirement)
-        requirement = self._configured_requirement(requirement)
+        state = self._generation_state(self.generation if generation is None else generation)
+        requirement = self._configured_requirement(requirement, config=state.config)
         candidates = list(self._providers.get(requirement.name, ()))
         if not candidates:
             raise CapabilityNotFoundError("no provider for capability {}".format(requirement.name))
@@ -596,7 +767,7 @@ class Runtime:
                 "capability {} has ambiguous providers: {}".format(requirement.name, providers)
             )
         component, spec = candidates[0]
-        return ProviderBinding(spec, component.name, self.generation if generation is None else generation)
+        return ProviderBinding(spec, component.name, state.generation)
 
     async def invoke(
         self,
@@ -614,7 +785,8 @@ class Runtime:
         if binding.capability.mode not in (InvocationMode.INVOKE, InvocationMode.INVOKE_AND_STREAM):
             raise CapabilityModeError("capability {} does not support invoke".format(binding.capability.name))
         required_permissions = binding.capability.permissions
-        if self._allowed_permissions is not None and not required_permissions.issubset(self._allowed_permissions):
+        permissions = self._generation_state(run.generation).allowed_permissions
+        if permissions is not None and not required_permissions.issubset(permissions):
             self.logger.emit(
                 "warning",
                 "invocation_denied",
@@ -698,7 +870,8 @@ class Runtime:
         if binding.capability.mode not in (InvocationMode.STREAM, InvocationMode.INVOKE_AND_STREAM):
             raise CapabilityModeError("capability {} does not support stream".format(binding.capability.name))
         required_permissions = binding.capability.permissions
-        if self._allowed_permissions is not None and not required_permissions.issubset(self._allowed_permissions):
+        permissions = self._generation_state(run.generation).allowed_permissions
+        if permissions is not None and not required_permissions.issubset(permissions):
             self.logger.emit(
                 "warning",
                 "stream_denied",
@@ -819,19 +992,28 @@ class Runtime:
                 workflow = self._workflows[workflow]
             except KeyError as exc:
                 raise KeyError("unknown workflow: {}".format(workflow)) from exc
-        self._ensure_workflow_enabled(workflow.name)
-        run = WorkflowRun(self, Scope(logger=self.logger), workflow.name, correlation_id=correlation_id)
+        generation = self.generation
+        state = self._generation_state(generation)
+        self._ensure_workflow_enabled(workflow.name, generation=generation)
+        run = WorkflowRun(
+            self,
+            Scope(logger=self.logger, max_concurrent_children=state.max_concurrent_children),
+            workflow.name,
+            correlation_id=correlation_id,
+            generation=generation,
+        )
         return await run.execute(workflow, value, timeout=timeout)
 
     def build_composed_workflow(self, name: str = "configured-composition") -> Any:
         """Compile the current startup composition into a WorkflowDefinition."""
-        if self._config is None:
+        state = self._generation_state(self.generation)
+        if state.config is None:
             raise ConfigurationError("a RuntimeConfig is required for composition execution")
-        if name == "configured-composition" and self._configured_workflow is not None:
-            return self._configured_workflow
-        if not (self._config.workflow_order or self._config.parallel_groups or self._config.branches):
+        if name == "configured-composition" and state.configured_workflow is not None:
+            return state.configured_workflow
+        if not (state.config.workflow_order or state.config.parallel_groups or state.config.branches):
             raise ConfigurationError("RuntimeConfig does not define a composition")
-        return self._compile_composed_workflow(self._config, name)
+        return self._compile_composed_workflow(state.config, name)
 
     def _compile_composed_workflow(self, config: Any, name: str) -> Any:
         from .workflow import ConfiguredWorkflow
@@ -862,13 +1044,22 @@ class Runtime:
         """Execute the validated startup composition as one Workflow Run."""
         if not self._started:
             raise ComponentLifecycleError("runtime is not started")
+        generation = self.generation
+        state = self._generation_state(generation)
         workflow = self.build_composed_workflow()
-        run = WorkflowRun(self, Scope(logger=self.logger), name, correlation_id=correlation_id)
+        run = WorkflowRun(
+            self,
+            Scope(logger=self.logger, max_concurrent_children=state.max_concurrent_children),
+            name,
+            correlation_id=correlation_id,
+            generation=generation,
+        )
         return await run.execute(workflow, value, timeout=timeout)
 
-    def _ensure_workflow_enabled(self, workflow_name: str) -> None:
-        if self._config is not None and self._config.workflow_names is not None:
-            if workflow_name not in self._config.workflow_names:
+    def _ensure_workflow_enabled(self, workflow_name: str, generation: Optional[int] = None) -> None:
+        state = self._generation_state(self.generation if generation is None else generation)
+        if state.config is not None and state.config.workflow_names is not None:
+            if workflow_name not in state.config.workflow_names:
                 raise ConfigurationError("workflow is not enabled: {}".format(workflow_name))
 
     def _selected_component_names(self) -> Tuple[str, ...]:
@@ -876,10 +1067,15 @@ class Runtime:
             return tuple(self._components)
         return self._config.component_names
 
-    def _configured_requirement(self, requirement: CapabilityRequirement) -> CapabilityRequirement:
-        if self._config is None:
+    def _configured_requirement(
+        self,
+        requirement: CapabilityRequirement,
+        *,
+        config: Any = None,
+    ) -> CapabilityRequirement:
+        if config is None:
             return requirement
-        configured = self._config.bindings.get(requirement.name)
+        configured = config.bindings.get(requirement.name)
         if configured is None:
             return requirement
         return CapabilityRequirement(
@@ -887,4 +1083,20 @@ class Runtime:
             requirement.version if requirement.version is not None else configured.version,
             requirement.provider if requirement.provider is not None else configured.provider,
         )
+
+    def _generation_state(self, generation: int) -> RuntimeGeneration:
+        try:
+            return self._generations[generation]
+        except KeyError as exc:
+            raise ConfigurationError("generation is no longer retained: {}".format(generation)) from exc
+
+    def _retire_generation_if_drained(self, state: RuntimeGeneration) -> None:
+        if state.retired and not state.active_runs and state.generation != self._current_generation:
+            self._generations.pop(state.generation, None)
+            self.logger.emit(
+                "debug",
+                "generation_released",
+                "retired generation resources released",
+                fields={"generation": state.generation, "resources_released": True},
+            )
 

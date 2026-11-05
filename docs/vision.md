@@ -42,5 +42,5 @@ Astra 的成功不由内核包含多少功能决定，而由以下行为决定�
 
 项目已经完成最小本地 Runtime 的首轮实现和验证。当前实现包含 Component、Capability、Workflow、Scope、Run、Invocation、Stream、EventBus、可信离线插件、JSON 启动配置、权限和结构化日志；Python Workflow 仍是内部语义的主要承载方式，JSON 只编排已经注册的 Workflow。
 
-当前仍不冻结完整 Python API、远程协议、Workflow DSL、插件生态或自动适配层。热更新、Generation 排空、资源限制、背压和外部副作用策略属于后续阶段。
+当前仍不冻结完整 Python API、远程协议、Workflow DSL、插件生态或自动适配层。配置级 Generation 切换、外部副作用契约和并行/EventBus/日志资源边界已经完成首轮实现；Stream 采用消费者驱动的单步读取，插件组件热替换和更复杂的统一资源策略属于后续能力。
 

@@ -18,6 +18,7 @@ _TOP_LEVEL_KEYS = {
     "bindings",
     "composition",
     "permissions",
+    "resources",
     "secrets",
 }
 _SECRET_MARKERS = ("api_key", "apikey", "authorization", "credential", "password", "secret", "token")
@@ -74,6 +75,7 @@ class RuntimeConfig:
     bindings: Mapping[str, CapabilityRequirement] = field(default_factory=lambda: MappingProxyType({}))
     workflow_params: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: MappingProxyType({}))
     permissions: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    resources: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     secrets: Mapping[str, SecretValue] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
@@ -155,6 +157,17 @@ class RuntimeConfig:
         if allow is not None:
             if not isinstance(allow, tuple) or any(not isinstance(item, str) or not item.strip() for item in allow):
                 raise ConfigurationError("permissions.allow must be an array of non-empty strings")
+        resources = _freeze(_require_mapping(data.get("resources", {}), "resources"))
+        unknown_resources = set(resources) - {"max_concurrent_children"}
+        if unknown_resources:
+            raise ConfigurationError("unknown resource fields: {}".format(", ".join(sorted(map(str, unknown_resources)))))
+        max_concurrent_children = resources.get("max_concurrent_children")
+        if max_concurrent_children is not None and (
+            isinstance(max_concurrent_children, bool)
+            or not isinstance(max_concurrent_children, int)
+            or max_concurrent_children < 1
+        ):
+            raise ConfigurationError("resources.max_concurrent_children must be a positive integer")
         secrets = _parse_secrets(data.get("secrets", {}))
         return cls(
             schema_version=version,
@@ -167,6 +180,7 @@ class RuntimeConfig:
             bindings=MappingProxyType(bindings),
             workflow_params=MappingProxyType(params),
             permissions=permissions,
+            resources=resources,
             secrets=MappingProxyType(secrets),
         )
 
@@ -190,6 +204,7 @@ class RuntimeConfig:
                 "workflow_order": self.workflow_order,
                 "parallel_groups": self.parallel_groups,
                 "branches": self.branches,
+                "resources": dict(self.resources),
                 "bindings": {
                     name: {"provider": req.provider, "version": req.version}
                     for name, req in self.bindings.items()

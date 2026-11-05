@@ -57,10 +57,18 @@ class EventSubscription:
 
 
 class EventBus:
-    def __init__(self, logger: Optional[StructuredLogger] = None) -> None:
+    def __init__(self, logger: Optional[StructuredLogger] = None, max_pending: Optional[int] = None) -> None:
+        if max_pending is not None and (
+            isinstance(max_pending, bool) or not isinstance(max_pending, int) or max_pending < 1
+        ):
+            raise ValueError("max_pending must be a positive integer")
         self.logger = logger or StructuredLogger()
         self._subscribers: Dict[str, Dict[str, Callable[[Event], Any]]] = {}
         self._pending: Dict[str, Set[asyncio.Task]] = {}
+        self._pending_count = 0
+        self._workflow_pending: Set[asyncio.Task] = set()
+        self.max_pending = max_pending
+        self.dropped = 0
 
     def subscribe(
         self,
@@ -85,6 +93,18 @@ class EventBus:
             try:
                 result = handler(event)
                 if inspect.isawaitable(result):
+                    if self.max_pending is not None and self._pending_total() >= self.max_pending:
+                        self.dropped += 1
+                        self.logger.emit(
+                            "warning",
+                            "event_backpressure_drop",
+                            "event handler dropped because the pending limit was reached",
+                            fields={"event_type": event.event_type, "max_pending": self.max_pending},
+                        )
+                        close = getattr(result, "close", None)
+                        if close is not None:
+                            close()
+                        continue
                     self._schedule(token, event.event_type, result)
             except asyncio.CancelledError:
                 raise
@@ -106,11 +126,30 @@ class EventBus:
         tasks: Set[asyncio.Task] = set()
 
         async def handler(event: Event) -> None:
+            if self.max_pending is not None and len(self._workflow_pending) >= self.max_pending:
+                self.dropped += 1
+                self.logger.emit(
+                    "warning",
+                    "event_backpressure_drop",
+                    "event-triggered workflow dropped because the pending limit was reached",
+                    fields={
+                        "event_type": event.event_type,
+                        "workflow": workflow.name,
+                        "max_pending": self.max_pending,
+                    },
+                )
+                return
             task = asyncio.create_task(
                 runtime.run_workflow(workflow, event.payload, correlation_id=event.correlation_id)
             )
             tasks.add(task)
-            task.add_done_callback(tasks.discard)
+            self._workflow_pending.add(task)
+
+            def discard_workflow(completed: asyncio.Task) -> None:
+                tasks.discard(completed)
+                self._workflow_pending.discard(completed)
+
+            task.add_done_callback(discard_workflow)
 
             def consume_result(completed: asyncio.Task) -> None:
                 if completed.cancelled():
@@ -139,12 +178,17 @@ class EventBus:
             scope.add_cleanup(cancel_tasks)
         return subscription
 
+    def _pending_total(self) -> int:
+        return self._pending_count + len(self._workflow_pending)
+
     def _unsubscribe(self, event_type: str, token: str) -> None:
         handlers = self._subscribers.get(event_type)
         if handlers is None:
             return
         handlers.pop(token, None)
-        for task in tuple(self._pending.pop(token, ())):
+        pending = self._pending.pop(token, ())
+        self._pending_count -= len(pending)
+        for task in tuple(pending):
             task.cancel()
         if not handlers:
             self._subscribers.pop(event_type, None)
@@ -152,11 +196,14 @@ class EventBus:
     def _schedule(self, token: str, event_type: str, awaitable: Any) -> None:
         task = asyncio.create_task(awaitable)
         self._pending.setdefault(token, set()).add(task)
+        self._pending_count += 1
 
         def consume_result(completed: asyncio.Task) -> None:
             pending = self._pending.get(token)
             if pending is not None:
-                pending.discard(completed)
+                if completed in pending:
+                    pending.discard(completed)
+                    self._pending_count -= 1
                 if not pending:
                     self._pending.pop(token, None)
             if completed.cancelled():

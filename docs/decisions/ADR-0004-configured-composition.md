@@ -15,7 +15,7 @@ RuntimeConfig 需要保存当前应用采用哪些 Workflow 以及它们的组�
 3. `composition.parallel` 只能引用 `order` 中的连续成员；组内 Workflow 接收同一输入，结果按声明顺序组成列表并传给下一单元。
 4. `composition.branches` 只表示无条件的单出边跳转；同一个 Workflow 不能声明多条出边，分支图不能成环或包含不可达边。
 5. 条件判断仍由 Python `RouteWorkflow` 等显式 Workflow 实现，JSON 不包含条件表达式。
-6. Runtime 在应用配置时编译并缓存 Configured Workflow；一次 Runtime 使用固定 Composition Generation，运行中不热更新。
+6. Runtime 在应用配置时编译并缓存 Configured Workflow；配置级重载先编译新 Generation，发布后只影响新的 Run，旧 Run 继续使用旧组合并完成排空。
 
 ## 结果
 

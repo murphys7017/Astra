@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import time
 import unittest
 
@@ -20,6 +21,7 @@ from astra import (
     PipelineWorkflow,
     RouteWorkflow,
     Runtime,
+    RuntimeConfig,
     SerialWorkflow,
     StructuredLogger,
     Scope,
@@ -100,6 +102,15 @@ class RuntimeTests(unittest.TestCase):
                 {"call": lambda request, inv: request},
                 capabilities={"call": CapabilitySpec("call", mode=InvocationMode.STREAM)},
             )
+        with self.assertRaises(ValueError):
+            CapabilitySpec("send", side_effect="external_effect", retry_safe=True)
+        safe = CapabilitySpec(
+            "send",
+            side_effect="external_effect",
+            retry_safe=True,
+            idempotency_key="request.id",
+        )
+        self.assertEqual(safe.idempotency_key, "request.id")
 
     def test_missing_and_incompatible_capabilities_fail_deterministically(self):
         async def scenario():
@@ -167,6 +178,28 @@ class RuntimeTests(unittest.TestCase):
         sink.close()
         self.assertEqual(len(slow.records), 1)
 
+    def test_nonblocking_sink_drops_when_its_queue_is_full(self):
+        class PausedSink:
+            def __init__(self):
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            def write(self, record):
+                self.started.set()
+                self.release.wait(1)
+
+        slow = PausedSink()
+        sink = NonBlockingLogSink(slow, maxsize=1)
+        logger = StructuredLogger([sink])
+        logger.emit("info", "queued", "first")
+        self.assertTrue(slow.started.wait(1))
+        logger.emit("info", "queued", "second")
+        logger.emit("info", "queued", "third")
+        self.assertGreaterEqual(sink.dropped, 1)
+        slow.release.set()
+        sink.flush()
+        sink.close()
+
     def test_workflow_component_can_be_invoked_as_capability(self):
         async def scenario():
             runtime = Runtime(StructuredLogger([MemoryLogSink()]))
@@ -199,6 +232,50 @@ class RuntimeTests(unittest.TestCase):
             await runtime.start()
             self.assertEqual(await runtime.run_workflow(workflow, "value"), ["value-first", "value-second"])
             await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_parallel_workflow_respects_configured_child_limit(self):
+        async def scenario():
+            active = 0
+            peak = 0
+
+            async def work(context, value):
+                nonlocal active, peak
+                active += 1
+                peak = max(peak, active)
+                await asyncio.sleep(0.01)
+                active -= 1
+                return value
+
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.apply_config(
+                RuntimeConfig.from_dict({"resources": {"max_concurrent_children": 1}})
+            )
+            workflow = ParallelWorkflow(
+                "limited-parallel",
+                [CallableWorkflow("first", work), CallableWorkflow("second", work)],
+            )
+            await runtime.start()
+            self.assertEqual(await runtime.run_workflow(workflow, "value"), ["value", "value"])
+            self.assertEqual(peak, 1)
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_child_slot_wait_is_cancelled_without_leaking_the_semaphore(self):
+        async def scenario():
+            with self.assertRaises(ValueError):
+                Scope(max_concurrent_children=1.5)
+            scope = Scope(max_concurrent_children=1)
+            held = await scope.acquire_child_slot()
+            waiter = asyncio.create_task(scope.acquire_child_slot())
+            await asyncio.sleep(0)
+            scope.cancel("slot waiter cancellation")
+            with self.assertRaises(asyncio.CancelledError):
+                await waiter
+            scope.release_child_slot(held)
+            await scope.close()
 
         self.run_async(scenario())
 
@@ -318,6 +395,66 @@ class RuntimeTests(unittest.TestCase):
             await bus.publish(Event("bad", None))
             await asyncio.wait_for(failure_seen.wait(), timeout=1)
             await trigger_scope.close()
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_event_bus_drops_async_handlers_at_pending_limit(self):
+        with self.assertRaises(ValueError):
+            EventBus(max_pending=0)
+
+        async def scenario():
+            started = asyncio.Event()
+            released = asyncio.Event()
+            completed = asyncio.Event()
+
+            async def handler(event):
+                started.set()
+                await released.wait()
+                completed.set()
+
+            bus = EventBus(StructuredLogger([MemoryLogSink()]), max_pending=1)
+            bus.subscribe("fact", handler)
+            await bus.publish(Event("fact", 1))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await bus.publish(Event("fact", 2))
+            await asyncio.sleep(0)
+            self.assertEqual(bus.dropped, 1)
+            released.set()
+            await asyncio.wait_for(completed.wait(), timeout=1)
+
+        self.run_async(scenario())
+
+    def test_event_workflow_subscription_applies_pending_limit_to_runs(self):
+        async def scenario():
+            started = asyncio.Event()
+            released = asyncio.Event()
+            received = []
+
+            async def handle(context, value):
+                started.set()
+                await released.wait()
+                received.append(value)
+                return value
+
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            workflow = CallableWorkflow("event-work", handle)
+            await runtime.start()
+            bus = EventBus(StructuredLogger([MemoryLogSink()]), max_pending=1)
+            scope = Scope()
+            bus.subscribe_workflow("fact", workflow, runtime, scope=scope)
+            await bus.publish(Event("fact", 1))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await bus.publish(Event("fact", 2))
+            await asyncio.sleep(0)
+            self.assertEqual(bus.dropped, 1)
+            released.set()
+            for _ in range(20):
+                if received == [1]:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(received, [1])
+            await scope.close()
             await runtime.stop()
 
         self.run_async(scenario())

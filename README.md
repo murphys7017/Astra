@@ -4,7 +4,7 @@ Astra 是一个以 Component 和 Capability 为基础的可组合智能系统运
 
 开发者可以自由组织 Workflow。Workflow 可以消费其他组件提供的能力，也可以作为 Component 对外提供能力，并通过显式调用、流式连接、路由决策和事件通知进行协作。
 
-当前仓库已完成**最小底座首轮闭环**：本地异步 Runtime、Workflow 组合、可信离线插件、JSON 启动配置、结构化日志、权限检查、流与事件收束以及性能基线均已有可运行实现和回归验证。
+当前仓库已完成**最小底座与首轮硬化**：本地异步 Runtime、Workflow 组合、可信离线插件、JSON 启动配置、结构化日志、权限检查、流与事件收束、配置 Generation 排空和性能基线均已有可运行实现和回归验证。下一步可以在稳定契约上接入真实插件。
 
 ## 当前基线
 
@@ -29,6 +29,7 @@ Astra 是一个以 Component 和 Capability 为基础的可组合智能系统运
 - [核心术语](docs/terms.md)：当前统一词汇及其关系。
 - [文档规划与路线](docs/roadmap.md)：文档阶段、验证阶段和暂缓事项。
 - [架构决策](docs/decisions/ADR-0001-document-first.md)：为什么先做文档和边界设计。
+- [Generation 生命周期决策](docs/decisions/ADR-0005-generation-lifecycle.md)：配置切换、运行固定和旧代际排空。
 - [组合编排决策](docs/decisions/ADR-0004-configured-composition.md)：JSON 组合语义和 Workflow 边界。
 - [Vision 1.1 原文归档](docs/reference/vision-1.1.md)：用户提供的完整基线文档。
 

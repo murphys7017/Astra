@@ -1,6 +1,6 @@
 # Astra 底座设计基线
 
-**状态**：已决定的设计基线，待实现验证  
+**状态**：已决定并完成首轮实现验证的设计基线
 **版本**：Base Design 0.3
 **日期**：2026-11-05
 **范围**：单进程、本地 Python Runtime 的概念设计，不冻结具体代码 API
@@ -124,7 +124,7 @@ Invocation 表示一次明确的 Capability 调用，拥有 `invocation_id`、�
 
 一次 Workflow Run 开始后，应固定它使用的 Workflow Definition、Composition Generation 和能力绑定策略。一次 Invocation 开始后，应固定其 Provider Binding。运行期间的 Provider 替换不改变已经开始的调用；新的调用也不能越过当前 Run 的 Generation 使用新的组合。
 
-长期设计中，插件更新、Provider 替换或 Workflow 修改应产生新的 Composition Generation。它只是 Runtime 内部的不可变执行代际，不是需要用户管理的 Profile 子系统。当前 Runtime 只在启动前应用一次配置并固定一个 Generation；新的 Generation、旧 Generation 排空和运行中热更新仍属于后续阶段。
+长期设计中，插件更新、Provider 替换或 Workflow 修改应产生新的 Composition Generation。它只是 Runtime 内部的不可变执行代际，不是需要用户管理的 Profile 子系统。当前 Runtime 已支持对已注册组件和 Workflow 进行配置级 Generation 切换，旧 Generation 会在 active Run 清零后排空释放；插件组件替换仍属于后续阶段。
 
 ## 4. 身份与所有权
 
@@ -238,6 +238,8 @@ Event 是不可变的已发生事实。第一阶段 EventBus：
 - 发布成功只表示事件被 Runtime 接受，不表示所有订阅者已经处理完成；
 - 第一阶段不承诺持久化、重放或跨进程可靠投递。
 
+当前首轮的资源边界保持最小且显式：配置中的 `resources.max_concurrent_children` 限制同一 Run Scope 内并行子 Workflow 数量，`EventBus(max_pending=...)` 限制待处理异步订阅和事件触发 Workflow，`NonBlockingLogSink(maxsize=...)` 对日志队列满载执行有界丢弃。Stream 继续采用消费者驱动的异步迭代，不在 Kernel 内隐式建立无界缓存队列。
+
 ### Control
 
 Control 改变执行状态，例如 Cancel、Stop、Pause、Resume、Retry 和 Approval。某个 Capability 是否支持这些控制，由其契约决定，Kernel 不对所有能力强行提供完整控制集。
@@ -258,6 +260,8 @@ Capability 必须声明副作用类别：
 - 可观察的受理或拒绝结果；
 - 幂等键或明确的不可重试声明；
 - 必要时由领域组件提供补偿策略。
+
+当前契约中，`retry_safe=true` 的 External Effect 必须同时声明 `idempotency_key`。Runtime 不会自动重试未声明安全策略的外部副作用。
 
 Runtime 停止只能清理 Managed Resource，不能假定 External Effect 可以自动撤销。
 
