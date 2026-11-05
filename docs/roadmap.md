@@ -1,8 +1,21 @@
 # 文档规划与阶段路线
 
-当前路线先完成设计资料和边界确认，再按阶段进入最小运行时实现。每个阶段都要区分“写入文档”“形成候选设计”和“经过验证”。
+当前路线已经从设计资料准备进入最小运行时实现和硬化阶段。每个阶段仍要区分“写入文档”“形成候选设计”和“经过验证”。
 
-当前正式执行计划见 [`implementation-plan.md`](implementation-plan.md)。
+当前正式执行计划见 [`initial-development-plan.md`](initial-development-plan.md)。
+
+## 当前执行进度
+
+| 范围 | 状态 | 说明 |
+|---|---|---|
+| D0-D3 文档、边界和验收基线 | 已完成首轮 | 愿景、边界、术语、设计基线和回归场景已经建立。 |
+| 阶段 1：最小 Kernel 与日志 | 已完成首轮 | Component、Capability、Run、Scope、Invocation、日志和生命周期已实现。 |
+| 阶段 2：JSON 配置和编排输入 | 已完成首轮 | JSON 校验、密钥边界、权限、Composition Snapshot 和有限 composition 执行已实现。 |
+| 阶段 3：可信离线插件 | 已完成首轮 | 本地发现、Manifest、依赖版本、注册回滚和停止释放已实现。 |
+| 阶段 4：Workflow Composition | 已完成首轮 | 串行、路由、并行、Pipeline、Stream、EventBus、子 Workflow 和 Workflow Component 已验证。 |
+| 阶段 5：安全与故障收束 | 部分完成 | 取消、超时、权限、日志故障和资源清理已验证；外部副作用策略、资源限制和背压仍待实现。 |
+| 阶段 6：性能和稳定性 | 基线完成 | 已有可重复的本地基准；持续性能门禁、高并发和高速流专项验证仍待补充。 |
+| 阶段 7：自动适配层 | 暂缓 | 作为底座之上的独立插件，不作为 Kernel 完成条件。 |
 
 ## 文档阶段
 
@@ -48,14 +61,15 @@
 
 实现阶段已经开始。首轮只验证单进程 Python Runtime 和最小 Workflow 组合，不把远程部署、DSL、兼容层或完整领域迁移混入首个实现目标。当前进度见 [`implementation-status.md`](implementation-status.md)。
 
-## 开放问题
+## 后续决策主题
 
-- Capability 版本兼容的后续范围是否需要从当前精确匹配扩展为范围匹配？
-- 多 Provider 的策略绑定如何由 JSON 表达？
-- Background Scope 如何显式脱离父 Run？
-- EventBus 第一版是否需要有界队列和背压？
-- 权限决策由 Runtime 内置策略、Policy Component，还是两者组合提供？
-- Stream 的终态是否统一为一种结构，还是按 Capability 定义？
+- Capability 版本兼容是否从当前精确匹配扩展为范围匹配；
+- Background Scope 如何在不破坏父子资源边界的情况下显式脱离父 Run；
+- EventBus、Stream 和日志队列的有界资源与背压策略；
+- 外部副作用的幂等键、重试安全声明和补偿边界；
+- 权限决策是否需要独立的 Policy Component；
+- 热更新时的 Generation 切换、旧 Generation 排空和失败回滚；
+- 更完整的 Control（暂停、恢复、审批和重试）是否进入 Kernel。
 
-这些问题应在 Kernel Contract RFC 中逐项决策或标记为待验证。
+这些问题应在对应 RFC 或实现阶段逐项决策；当前不把它们隐含进已完成的最小底座。
 

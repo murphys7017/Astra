@@ -11,7 +11,7 @@
 | `terms.md` | 统一 Component、Capability、Workflow 等词汇 | 公共词汇 |
 | `roadmap.md` | 规划文档工作、验证工作和延期方向 | 阶段性 |
 | `implementation-status.md` | 记录已实现范围、验证结果和下一步工作 | 实现状态 |
-| `config-and-plugin.md` | 说明 JSON 运行配置和可信离线插件的首轮行为 | 实现说明 |
+| `config-and-plugin.md` | 说明 JSON 运行配置、有限 Workflow 编排和可信离线插件的首轮行为 | 实现说明 |
 | `performance-baseline.md` | 记录本地 Runtime 性能基线测量方法 | 验证资料 |
 | `decisions/` | 记录需要长期追踪的架构选择 | 决策记录 |
 | `reference/` | 保存外部参考资料和输入原文 | 参考资料 |

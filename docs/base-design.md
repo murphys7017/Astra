@@ -124,7 +124,7 @@ Invocation 表示一次明确的 Capability 调用，拥有 `invocation_id`、�
 
 一次 Workflow Run 开始后，应固定它使用的 Workflow Definition、Composition Generation 和能力绑定策略。一次 Invocation 开始后，应固定其 Provider Binding。运行期间的 Provider 替换不改变已经开始的调用；新的调用也不能越过当前 Run 的 Generation 使用新的组合。
 
-插件更新、Provider 替换或 Workflow 修改会产生新的 Composition Generation。它只是 Runtime 内部的不可变执行代际，不是需要用户管理的 Profile 子系统。新 Generation 只服务新的 Run，旧 Generation 进入排空状态，等待现有 Run 结束后再停止和释放。
+长期设计中，插件更新、Provider 替换或 Workflow 修改应产生新的 Composition Generation。它只是 Runtime 内部的不可变执行代际，不是需要用户管理的 Profile 子系统。当前 Runtime 只在启动前应用一次配置并固定一个 Generation；新的 Generation、旧 Generation 排空和运行中热更新仍属于后续阶段。
 
 ## 4. 身份与所有权
 
@@ -242,6 +242,8 @@ Event 是不可变的已发生事实。第一阶段 EventBus：
 
 Control 改变执行状态，例如 Cancel、Stop、Pause、Resume、Retry 和 Approval。某个 Capability 是否支持这些控制，由其契约决定，Kernel 不对所有能力强行提供完整控制集。
 
+当前首轮只实现取消、停止收束和超时相关的最小控制路径；暂停、恢复、审批和通用重试没有进入当前 Runtime。
+
 ## 9. 权限与副作用
 
 Capability 必须声明副作用类别：
@@ -285,7 +287,7 @@ Runtime 额外开销应有明确预算，第一阶段只要求能够单独测量
 - 单进程、本地 Python；
 - 本地插件或内置组件的离线发现和载入；
 - 内存中的 Registry、Resolver 和 EventBus；
-- 代码定义的 Workflow，以及用于选择组合和参数的最小 JSON 运行配置；
+- 代码定义的 Workflow，以及用于选择组合、参数和有限执行关系的最小 JSON 运行配置；
 - Workflow 作为 Workflow Component 对外提供 Capability；
 - 两个 Provider 提供同一 Capability；
 - Invoke、Stream、Route、Event 和取消/停止等最小控制语义；
@@ -315,5 +317,5 @@ Runtime 额外开销应有明确预算，第一阶段只要求能够单独测量
 7. 插件载入、Workflow 组合和运行期间绑定不可变的关系已明确。
 8. 底座不依赖任何具体外部项目，且外部适配可以在其上独立增加。
 
-本文完成后仍然需要实现验证；“设计完成”不等于“运行时已实现”。
+本文是长期设计基线，不替代实现状态。当前首轮 Runtime 已对其中的最小范围完成实现验证；具体已实现项和后续边界以 [`implementation-status.md`](implementation-status.md) 为准。
 

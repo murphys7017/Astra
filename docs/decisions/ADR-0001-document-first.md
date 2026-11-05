@@ -26,5 +26,5 @@ Astra 的目标是提供可组合的 Component Runtime。项目同时涉及组�
 
 ## 后续触发条件
 
-只有当 Kernel Contract RFC 覆盖第一阶段能力，并且关键验收场景可被清楚描述时，才进入 Runtime 实现。
+该触发条件已经满足：Kernel Contract、边界和关键验收场景已形成，仓库已经进入并完成最小 Runtime 的首轮实现。本文保留为历史决策，后续公共契约仍需通过用例和回归验证后再扩展。
 

@@ -50,7 +50,7 @@ Capability 的存在、是否允许 Agent 调用，以及如何生成模型可�
 
 Workflow 是能力组合，不是内核预设的业务流程。它可以调用 Component 或其他 Workflow，也可以对外提供 Capability。
 
-第一阶段只要求使用 Python 进行显式编排。Workflow Definition、Workflow Run 和 Workflow Component 要保持概念区分，但不提前设计 DSL、图形编辑器或序列化 IR。
+Workflow 内部仍使用 Python 进行显式编排。RuntimeConfig 可以把已经注册的 Workflow 组织成有限的串行、连续并行组和无条件单出边组合，但不定义步骤、条件表达式或组件内部行为。Workflow Definition、Workflow Run 和 Workflow Component 要保持概念区分，不提前设计完整 DSL、图形编辑器或序列化 IR。
 
 ## Invoke、Stream、Event 和 Control
 
@@ -59,7 +59,7 @@ Workflow 是能力组合，不是内核预设的业务流程。它可以调用 C
 - **Event**：已经发生的事实，用于松耦合通知，不代替请求响应。
 - **Control**：对正在执行的 Run 或 Invocation 发出取消、停止、暂停、恢复、重试或审批请求。
 
-这些是交互语义，不要求实现为四套独立总线。
+这些是交互语义，不要求实现为四套独立总线。当前 Kernel 首轮实现了取消、停止收束和超时路径；暂停、恢复、审批和通用重试仍属于后续 Control 设计。
 
 ## 第一阶段边界
 
@@ -72,6 +72,7 @@ Workflow 是能力组合，不是内核预设的业务流程。它可以调用 C
 - 至少两种能力提供者和多条可组合 Workflow；
 - 可信本地插件的离线载入；
 - 使用 JSON 表达当前组合、绑定和运行参数；
+- 执行已注册 Workflow 的有限 JSON composition；
 - 统一日志数据入口和最小备用输出。
 
 暂缓到后续阶段：
@@ -81,6 +82,7 @@ Workflow 是能力组合，不是内核预设的业务流程。它可以调用 C
 - Workflow DSL、IR 和可视化编辑器；
 - 外部项目兼容层和自动适配层；
 - 热重载和完整插件市场；
+- 运行时资源限制、背压和完整 Control；
 - 任何外部项目的整体迁移。
 
 ## 必须守住的不变量

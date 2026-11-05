@@ -40,5 +40,7 @@ Astra 的成功不由内核包含多少功能决定，而由以下行为决定�
 
 ## 当前阶段
 
-当前只做项目设计和文档整理，不冻结具体 Python API，也不实现运行时代码。下一阶段应先形成一份小型 Kernel Contract RFC，再用最小用例验证其边界。
+项目已经完成最小本地 Runtime 的首轮实现和验证。当前实现包含 Component、Capability、Workflow、Scope、Run、Invocation、Stream、EventBus、可信离线插件、JSON 启动配置、权限和结构化日志；Python Workflow 仍是内部语义的主要承载方式，JSON 只编排已经注册的 Workflow。
+
+当前仍不冻结完整 Python API、远程协议、Workflow DSL、插件生态或自动适配层。热更新、Generation 排空、资源限制、背压和外部副作用策略属于后续阶段。
 
