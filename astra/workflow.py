@@ -1,7 +1,7 @@
 """Explicit Python workflow composition primitives."""
 
 import asyncio
-from typing import Any, Callable, Iterable, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Tuple
 
 from .contracts import CapabilitySpec
 from .errors import WorkflowError
@@ -73,6 +73,161 @@ class SerialWorkflow(WorkflowDefinition):
 
 class PipelineWorkflow(SerialWorkflow):
     """An explicitly named ordered data pipeline."""
+
+
+class ConfiguredWorkflow(WorkflowDefinition):
+    """Execute named workflows selected by a validated RuntimeConfig.
+
+    The configuration only names existing WorkflowDefinitions. It does not
+    define their internal steps or predicates. ``order`` is a serial path,
+    ``parallel`` groups contiguous path members and returns an ordered list,
+    and ``branches`` are unconditional single-edge jumps.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        workflows: Mapping[str, WorkflowDefinition],
+        order: Sequence[str],
+        parallel_groups: Sequence[Sequence[str]] = (),
+        branches: Sequence[Mapping[str, Any]] = (),
+    ) -> None:
+        super().__init__(name)
+        self._workflows = dict(workflows)
+        self._order = tuple(order)
+        self._parallel_groups = tuple(tuple(group) for group in parallel_groups)
+        self._branches = {}
+        for branch in branches:
+            source = str(branch["from"])
+            target = str(branch["to"])
+            if source in self._branches:
+                raise WorkflowError("configured workflow has multiple branches from {}".format(source))
+            self._branches[source] = target
+        self._group_by_start = {}
+        self._group_members = set()
+        self._validate()
+
+    def _validate(self) -> None:
+        if not self._workflows:
+            raise WorkflowError("configured workflow has no workflows")
+        declared = set(self._workflows)
+        if any(name not in declared for name in self._order):
+            raise WorkflowError("configured workflow references an unknown workflow")
+        for source, target in self._branches.items():
+            if source not in declared or target not in declared:
+                raise WorkflowError("configured branch references an unknown workflow")
+            if source == target:
+                raise WorkflowError("configured workflow branch cannot target itself")
+
+        for group in self._parallel_groups:
+            if not group:
+                raise WorkflowError("configured parallel group must not be empty")
+            if any(name not in declared for name in group):
+                raise WorkflowError("configured parallel group references an unknown workflow")
+            overlap = self._group_members.intersection(group)
+            if overlap:
+                raise WorkflowError("configured parallel groups overlap")
+            self._group_members.update(group)
+        if self._parallel_groups and not self._order:
+            raise WorkflowError("configured parallel groups require an order")
+        positions = {name: index for index, name in enumerate(self._order)}
+        for group in self._parallel_groups:
+            indexes = [positions.get(name) for name in group]
+            if any(index is None for index in indexes):
+                raise WorkflowError("configured parallel group must be included in order")
+            first = min(indexes)
+            expected = tuple(range(first, first + len(group)))
+            if tuple(sorted(indexes)) != expected:
+                raise WorkflowError("configured parallel group must be contiguous in order")
+            self._group_by_start[self._order[first]] = group
+
+        for source in self._branches:
+            if source in self._group_members and source not in self._group_by_start:
+                raise WorkflowError("configured branch cannot start inside a parallel group")
+        for target in self._branches.values():
+            if target in self._group_members and target not in self._group_by_start:
+                raise WorkflowError("configured branch cannot target inside a parallel group")
+
+        self._validate_branch_cycles()
+        if not self._order:
+            nodes = set(self._branches) | set(self._branches.values())
+            roots = nodes - set(self._branches.values())
+            if len(roots) != 1:
+                raise WorkflowError("configured branches require one root workflow")
+            self._root = next(iter(roots))
+        else:
+            self._root = self._order[0]
+        self._validate_branch_reachability()
+
+    def _validate_branch_cycles(self) -> None:
+        for start in self._branches:
+            seen = set()
+            current = start
+            while current in self._branches:
+                if current in seen:
+                    raise WorkflowError("configured workflow branches contain a cycle")
+                seen.add(current)
+                current = self._branches[current]
+
+    def _next_in_order(self, name: str) -> Optional[str]:
+        if name not in self._order:
+            return None
+        index = self._order.index(name) + 1
+        return self._order[index] if index < len(self._order) else None
+
+    def _validate_branch_reachability(self) -> None:
+        reachable = set()
+        current = self._root
+        while current is not None:
+            if current in reachable:
+                raise WorkflowError("configured workflow execution contains a cycle")
+            group = self._group_by_start.get(current)
+            if group is not None:
+                if any(name in reachable for name in group):
+                    raise WorkflowError("configured workflow execution contains a cycle")
+                reachable.update(group)
+                branch_source = group[0]
+                linear_next = self._next_in_order(group[-1])
+            else:
+                reachable.add(current)
+                branch_source = current
+                linear_next = self._next_in_order(current)
+            current = self._branches.get(branch_source, linear_next)
+        unreachable = set(self._branches) - reachable
+        if unreachable:
+            raise WorkflowError(
+                "configured branch source is unreachable: {}".format(", ".join(sorted(unreachable)))
+            )
+
+    async def execute(self, context: "WorkflowContext", value: Any) -> Any:
+        result = value
+        current = self._root
+        visited = set()
+        while current is not None:
+            if current in visited:
+                raise WorkflowError("configured workflow revisited {}".format(current))
+            group = self._group_by_start.get(current)
+            if group is not None:
+                tasks = [asyncio.create_task(context.child(self._workflows[name], result)) for name in group]
+                try:
+                    results = await asyncio.gather(*tasks)
+                except BaseException:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    raise
+                result = list(results)
+                visited.update(group)
+                branch_source = group[0]
+                linear_next = self._next_in_order(group[-1])
+            else:
+                result = await context.child(self._workflows[current], result)
+                visited.add(current)
+                branch_source = current
+                linear_next = self._next_in_order(current)
+            current = self._branches.get(branch_source, linear_next)
+        return result
 
 
 class RouteWorkflow(WorkflowDefinition):

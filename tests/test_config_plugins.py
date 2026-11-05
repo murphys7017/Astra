@@ -80,6 +80,119 @@ class ConfigAndPluginTests(unittest.TestCase):
         )
         self.assertNotIn("TOP-SECRET", repr(inline))
 
+    def test_composition_shape_is_rejected_before_runtime_start(self):
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"composition": {"order": ["same", "same"]}})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"composition": {"parallel": [["left", "left"]]}})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"composition": {"parallel": [["left"]]}})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict({"composition": {"branches": [{"from": "left"}]}})
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict(
+                {"composition": {"branches": [{"from": "left", "to": "right"}, {"from": "left", "to": "end"}]}}
+            )
+        with self.assertRaises(ConfigurationError):
+            RuntimeConfig.from_dict(
+                {"composition": {"branches": [{"from": "left", "to": "right"}, {"from": "right", "to": "left"}]}}
+            )
+
+    def test_json_composition_executes_order_parallel_and_branch(self):
+        async def scenario():
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_workflow(SerialWorkflow("first", [lambda context, value: value + 1]))
+            runtime.register_workflow(SerialWorkflow("second", [lambda context, value: value * 2]))
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "first"}, {"name": "second"}],
+                        "composition": {"order": ["first", "second"]},
+                    }
+                )
+            )
+            await runtime.start()
+            self.assertIs(runtime.build_composed_workflow(), runtime.build_composed_workflow())
+            self.assertEqual(await runtime.run_composition(3), 8)
+            await runtime.stop()
+
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_workflow(SerialWorkflow("left", [lambda context, value: value + 10]))
+            runtime.register_workflow(SerialWorkflow("right", [lambda context, value: value + 20]))
+            runtime.register_workflow(SerialWorkflow("collect", [lambda context, value: sum(value)]))
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "left"}, {"name": "right"}, {"name": "collect"}],
+                        "composition": {
+                            "order": ["left", "right", "collect"],
+                            "parallel": [["left", "right"]],
+                        },
+                    }
+                )
+            )
+            await runtime.start()
+            self.assertEqual(await runtime.run_composition(3), 36)
+            await runtime.stop()
+
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_workflow(SerialWorkflow("start", [lambda context, value: value + "-start"]))
+            runtime.register_workflow(SerialWorkflow("finish", [lambda context, value: value + "-finish"]))
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "start"}, {"name": "finish"}],
+                        "composition": {"branches": [{"from": "start", "to": "finish"}]},
+                    }
+                )
+            )
+            await runtime.start()
+            self.assertEqual(await runtime.run_composition("value"), "value-start-finish")
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_composition_constraints_fail_during_config_apply(self):
+        runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+        for name in ("first", "middle", "last"):
+            runtime.register_workflow(SerialWorkflow(name, [lambda context, value: value]))
+        with self.assertRaises(ConfigurationError):
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "first"}, {"name": "middle"}, {"name": "last"}],
+                        "composition": {
+                            "order": ["first", "last", "middle"],
+                            "parallel": [["first", "middle"]],
+                        },
+                    }
+                )
+            )
+        with self.assertRaises(ConfigurationError):
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "first"}, {"name": "middle"}],
+                        "composition": {
+                            "order": ["first", "middle"],
+                            "branches": [{"from": "middle", "to": "first"}],
+                        },
+                    }
+                )
+            )
+        with self.assertRaises(ConfigurationError):
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "workflows": [{"name": "first"}, {"name": "middle"}, {"name": "last"}],
+                        "composition": {
+                            "order": ["first"],
+                            "branches": [{"from": "middle", "to": "last"}],
+                        },
+                    }
+                )
+            )
+
     def test_disabled_child_workflow_cannot_bypass_config(self):
         async def scenario():
             runtime = Runtime(StructuredLogger([MemoryLogSink()]))

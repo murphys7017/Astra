@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from .contracts import CapabilityRequirement
-from .errors import ConfigurationError, SensitiveConfigurationError
+from .errors import ConfigurationError, SensitiveConfigurationError, WorkflowError
 
 
 _TOP_LEVEL_KEYS = {
@@ -128,7 +128,10 @@ class RuntimeConfig:
         order = _string_tuple(composition.get("order", ()), "composition.order")
         _require_unique(order, "composition.order")
         parallel = _parallel_groups(composition.get("parallel", ()))
+        if parallel and not order:
+            raise ConfigurationError("composition.parallel requires composition.order")
         branches = _branch_tuple(composition.get("branches", ()))
+        _validate_branch_graph(branches)
 
         binding_data = _require_mapping(data.get("bindings", {}), "bindings")
         bindings: Dict[str, CapabilityRequirement] = {}
@@ -225,6 +228,22 @@ class RuntimeConfig:
                 raise ConfigurationError(
                     "binding for {} references unknown component {}".format(capability, requirement.provider)
                 )
+        if self.workflow_order or self.parallel_groups or self.branches:
+            from .workflow import ConfiguredWorkflow
+
+            selected_workflows = (
+                set(self.workflow_names) if self.workflow_names is not None else workflow_names
+            )
+            try:
+                ConfiguredWorkflow(
+                    "__config_validation__",
+                    {name: workflows[name] for name in selected_workflows},
+                    self.workflow_order,
+                    self.parallel_groups,
+                    self.branches,
+                )
+            except WorkflowError as exc:
+                raise ConfigurationError("invalid composition: {}".format(exc)) from exc
 
 
 @dataclass(frozen=True)
@@ -263,9 +282,14 @@ def _parallel_groups(value: Any) -> Tuple[Tuple[str, ...], ...]:
     if not isinstance(value, (list, tuple)):
         raise ConfigurationError("composition.parallel must be an array")
     result = []
+    seen = set()
     for group in value:
         names = _string_tuple(group, "composition.parallel group")
         _require_unique(names, "composition.parallel group")
+        overlap = seen.intersection(names)
+        if overlap:
+            raise ConfigurationError("composition.parallel groups must not overlap")
+        seen.update(names)
         result.append(names)
     return tuple(result)
 
@@ -274,6 +298,7 @@ def _branch_tuple(value: Any) -> Tuple[Mapping[str, Any], ...]:
     if not isinstance(value, (list, tuple)):
         raise ConfigurationError("composition.branches must be an array")
     result = []
+    sources = set()
     for index, branch in enumerate(value):
         item = _require_mapping(branch, "composition.branches[{}]".format(index))
         required = {"from", "to"}
@@ -289,8 +314,23 @@ def _branch_tuple(value: Any) -> Tuple[Mapping[str, Any], ...]:
             or not item["to"].strip()
         ):
             raise ConfigurationError("composition branch endpoints must be non-empty strings")
+        if item["from"] in sources:
+            raise ConfigurationError("composition.branches must have at most one outgoing edge per workflow")
+        sources.add(item["from"])
         result.append(_freeze(item))
     return tuple(result)
+
+
+def _validate_branch_graph(branches: Tuple[Mapping[str, Any], ...]) -> None:
+    edges = {str(branch["from"]): str(branch["to"]) for branch in branches}
+    for start in edges:
+        seen = set()
+        current = start
+        while current in edges:
+            if current in seen:
+                raise ConfigurationError("composition.branches must not contain cycles")
+            seen.add(current)
+            current = edges[current]
 
 
 def _require_unique(values: Tuple[str, ...], label: str) -> None:

@@ -1,6 +1,6 @@
-# Astra JSON 配置与离线插件首轮实现
+# Astra JSON 配置、编排与离线插件首轮实现
 
-本文记录当前已经落地的 Stage 2/3 最小行为。它不是最终配置 DSL，也不提供管理界面。
+本文记录当前已经落地的 JSON 配置、编排与离线插件最小行为。它不是最终配置 DSL，也不提供管理界面。
 
 ## JSON 配置
 
@@ -17,7 +17,18 @@ RuntimeConfig 接受一个 JSON 对象，当前支持：
 - `permissions`：当前组合的权限元数据；
 - `secrets`：密钥引用或受保护的内联密钥。
 
-JSON 只选择当前组合和参数，不定义组件内部行为，也不取代 Python Workflow 的执行语义。Runtime 在启动前校验组件、Workflow、绑定和组合引用，并生成不可变 Composition Snapshot。当前 `composition.order`、`parallel` 和 `branches` 是经过校验的编排声明，供后续组合引擎使用；它们不会在本阶段静默变成另一套 JSON Workflow DSL。
+JSON 只选择当前组合和参数，不定义组件内部行为，也不取代 Python Workflow 的执行语义。Runtime 在启动前校验组件、Workflow、绑定和组合引用，并生成不可变 Composition Snapshot。调用 `runtime.run_composition(...)` 时，`composition.order` 作为串行执行顺序，`composition.parallel` 中的连续成员以同一输入并行执行并按声明顺序汇合，`composition.branches` 作为无条件的单出边跳转。条件路由仍由 Python `RouteWorkflow` 提供，JSON 不因此变成完整 Workflow DSL。
+
+并行组必须完整出现在 `composition.order` 的连续位置，不能互相重叠；分支图不能有环，也不能从同一个 Workflow 声明多条出边。分支不能从或指向并行组内部成员，只能以并行组的首节点作为跳转点。组合入口会固定当前已注册 Workflow 和 Composition Generation，运行中不会替换其中的成员。
+
+最小调用方式如下：
+
+```python
+config = RuntimeConfig.from_json("runtime.json")
+runtime.apply_config(config)
+await runtime.start()
+result = await runtime.run_composition(input_value)
+```
 
 如果 Capability 声明了权限，配置可以用 `permissions.allow` 提供允许集合。调用前由 Runtime 检查，缺少权限时 Provider 不会执行；没有显式允许集合时，带权限的 Capability 默认拒绝。
 

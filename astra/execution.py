@@ -444,6 +444,7 @@ class Runtime:
         self._workflows: Dict[str, Any] = {}
         self._config = None
         self._composition = None
+        self._configured_workflow = None
         self._allowed_permissions = frozenset()
         self._started = False
         self._started_component_names: Tuple[str, ...] = ()
@@ -478,8 +479,12 @@ class Runtime:
         config.validate_registered(self._components, self._workflows)
         from .config import CompositionSnapshot
 
+        configured_workflow = None
+        if config.workflow_order or config.parallel_groups or config.branches:
+            configured_workflow = self._compile_composed_workflow(config, "configured-composition")
         self._config = config
         self._composition = CompositionSnapshot(self.generation, config)
+        self._configured_workflow = configured_workflow
         allowed = config.permissions.get("allow")
         self._allowed_permissions = frozenset() if allowed is None else frozenset(allowed)
 
@@ -816,6 +821,49 @@ class Runtime:
                 raise KeyError("unknown workflow: {}".format(workflow)) from exc
         self._ensure_workflow_enabled(workflow.name)
         run = WorkflowRun(self, Scope(logger=self.logger), workflow.name, correlation_id=correlation_id)
+        return await run.execute(workflow, value, timeout=timeout)
+
+    def build_composed_workflow(self, name: str = "configured-composition") -> Any:
+        """Compile the current startup composition into a WorkflowDefinition."""
+        if self._config is None:
+            raise ConfigurationError("a RuntimeConfig is required for composition execution")
+        if name == "configured-composition" and self._configured_workflow is not None:
+            return self._configured_workflow
+        if not (self._config.workflow_order or self._config.parallel_groups or self._config.branches):
+            raise ConfigurationError("RuntimeConfig does not define a composition")
+        return self._compile_composed_workflow(self._config, name)
+
+    def _compile_composed_workflow(self, config: Any, name: str) -> Any:
+        from .workflow import ConfiguredWorkflow
+
+        workflow_names = config.workflow_names
+        if workflow_names is None:
+            selected = tuple(self._workflows)
+        else:
+            selected = workflow_names
+        workflows = {workflow_name: self._workflows[workflow_name] for workflow_name in selected}
+        order = config.workflow_order
+        return ConfiguredWorkflow(
+            name,
+            workflows,
+            order,
+            config.parallel_groups,
+            config.branches,
+        )
+
+    async def run_composition(
+        self,
+        value: Any,
+        *,
+        name: str = "configured-composition",
+        timeout: Optional[float] = None,
+        correlation_id: Optional[str] = None,
+    ) -> Any:
+        """Execute the validated startup composition as one Workflow Run."""
+        if not self._started:
+            raise ComponentLifecycleError("runtime is not started")
+        workflow = self.build_composed_workflow()
+        run = WorkflowRun(self, Scope(logger=self.logger), name, correlation_id=correlation_id)
         return await run.execute(workflow, value, timeout=timeout)
 
     def _ensure_workflow_enabled(self, workflow_name: str) -> None:

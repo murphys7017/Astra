@@ -21,6 +21,7 @@
 - JSON RuntimeConfig 的结构校验、敏感配置边界和不可变 Composition Snapshot；
 - 可信本地 Plugin Manifest 发现、入口加载、依赖排序和注册事务回滚；
 - JSON 选择启用组件、Workflow 和 Capability Provider Binding。
+- JSON composition 可编译为固定的配置 Workflow，支持串行顺序、连续并行组和无条件单出边跳转；
 - 并行 Workflow 的结果汇合；
 - Scope 绑定的内存 EventBus 和事件触发 Workflow；
 - 有序异步 Stream、生产者取消和单一终态；
@@ -43,13 +44,12 @@ python -m compileall -q astra tests tools
 python -m tools.benchmark_runtime --iterations 1000
 ```
 
-当前测试包含 24 个用例，覆盖组件生命周期、Capability 契约归一化、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置、默认拒绝权限、事件订阅和临时本地插件加载。
+当前测试包含 27 个用例，覆盖组件生命周期、Capability 契约归一化、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置与组合执行、默认拒绝权限、事件订阅和临时本地插件加载。
 
 ## 尚未实现
 
 以下内容按开发计划保留在后续阶段：
 
-- JSON 组合声明到实际图执行的组合引擎；当前由显式 Python Workflow 执行；
 - Runtime 运行中的配置热更新、Generation 切换和旧组合排空；
 - 资源限制、背压和更完整的故障策略；
 - 性能预算阈值和持续回归门禁；

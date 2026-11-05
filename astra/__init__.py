@@ -34,6 +34,7 @@ from .plugins import LoadedPlugin, PluginLoader, PluginManifest
 from .workflow import (
     CallableWorkflow,
     ChildWorkflow,
+    ConfiguredWorkflow,
     RouteWorkflow,
     ParallelWorkflow,
     PipelineWorkflow,
@@ -53,6 +54,7 @@ __all__ = [
     "CapabilityVersionError",
     "CallableWorkflow",
     "ChildWorkflow",
+    "ConfiguredWorkflow",
     "Component",
     "ComponentLifecycleError",
     "CompositionSnapshot",
