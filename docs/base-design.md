@@ -207,7 +207,7 @@ Kernel 终态与领域终态分离。例如，工具调用完成不代表消息�
 - 子调用完成后的迟到结果不能写入已经结束或已替换的消费上下文；
 - 脱离父 Run 的后台执行必须显式创建新的长期 Scope，并保留因果关联。
 
-取消不是立即抹除执行，而是一个需要被 Provider 和资源管理器共同收束的控制信号。最终必须记录取消已请求、执行已终止和资源已释放这几个可区分事实。
+取消不是立即抹除执行，而是一个需要被 Provider 和资源管理器共同收束的控制信号。最终必须记录取消已请求、执行已终止和资源已释放这几个可区分事实。Runtime 停止由外部控制平面发起，不能由当前 Run 自身等待。
 
 ## 8. Invoke、Stream、Event 和 Control
 
@@ -238,7 +238,7 @@ Event 是不可变的已发生事实。第一阶段 EventBus：
 - 发布成功只表示事件被 Runtime 接受，不表示所有订阅者已经处理完成；
 - 第一阶段不承诺持久化、重放或跨进程可靠投递。
 
-当前首轮的资源边界保持最小且显式：配置中的 `resources.max_concurrent_children` 限制同一 Run Scope 内并行子 Workflow 数量，`EventBus(max_pending=...)` 限制待处理异步订阅和事件触发 Workflow，`NonBlockingLogSink(maxsize=...)` 对日志队列满载执行有界丢弃。Stream 继续采用消费者驱动的异步迭代，不在 Kernel 内隐式建立无界缓存队列。
+当前首轮的资源边界保持最小且显式：配置中的 `resources.max_concurrent_children` 限制同一 Run Scope 内并行子 Workflow 数量，`EventBus(max_pending=...)` 分别限制普通异步订阅和事件触发 Workflow 的待处理任务，`NonBlockingLogSink(maxsize=...)` 对日志队列满载执行有界丢弃。Stream 继续采用消费者驱动的异步迭代，不在 Kernel 内隐式建立无界缓存队列。
 
 ### Control
 

@@ -1,6 +1,7 @@
 """The minimal local execution kernel."""
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 import inspect
@@ -18,6 +19,9 @@ from .errors import (
     PermissionDeniedError,
 )
 from .logging import StructuredLogger
+
+
+_ACTIVE_RUN: ContextVar[Optional["WorkflowRun"]] = ContextVar("astra_active_run", default=None)
 
 
 def _new_id(prefix: str) -> str:
@@ -376,6 +380,7 @@ class WorkflowRun:
         self._task = asyncio.current_task()
         self.runtime._active_runs.add(self)
         self._generation_state.active_runs.add(self)
+        active_run_token = _ACTIVE_RUN.set(self)
         self.runtime.logger.emit(
             "info",
             "run_started",
@@ -453,11 +458,14 @@ class WorkflowRun:
             )
             raise
         finally:
-            self._task = None
-            self.runtime._active_runs.discard(self)
-            self._generation_state.active_runs.discard(self)
-            await self.scope.close()
-            self.runtime._retire_generation_if_drained(self._generation_state)
+            try:
+                await self.scope.close()
+            finally:
+                self._task = None
+                self.runtime._active_runs.discard(self)
+                self._generation_state.active_runs.discard(self)
+                self.runtime._retire_generation_if_drained(self._generation_state)
+                _ACTIVE_RUN.reset(active_run_token)
             self.runtime.logger.emit(
                 "debug",
                 "scope_released",
@@ -531,10 +539,6 @@ class Runtime:
         self._providers: Dict[str, list] = {}
         self._workflows: Dict[str, Any] = {}
         self._config = None
-        self._composition = None
-        self._configured_workflow = None
-        self._allowed_permissions = frozenset()
-        self._max_concurrent_children = None
         self._started = False
         self._started_component_names: Tuple[str, ...] = ()
         self._active_runs: Set[WorkflowRun] = set()
@@ -594,10 +598,6 @@ class Runtime:
         )
         self._generations[self._current_generation] = state
         self._config = config
-        self._composition = state.composition
-        self._configured_workflow = configured_workflow
-        self._allowed_permissions = allowed_permissions
-        self._max_concurrent_children = max_concurrent_children
 
     def reload_config(self, config: Any) -> None:
         """Validate and publish a new config generation without interrupting old runs.
@@ -644,10 +644,6 @@ class Runtime:
         self._generations[next_generation] = state
         self._current_generation = next_generation
         self._config = config
-        self._composition = state.composition
-        self._configured_workflow = configured_workflow
-        self._allowed_permissions = allowed_permissions
-        self._max_concurrent_children = max_concurrent_children
         self.logger.emit(
             "info",
             "generation_published",
@@ -658,7 +654,7 @@ class Runtime:
 
     @property
     def composition(self) -> Any:
-        return self._composition
+        return self._generation_state(self.generation).composition
 
     def register_workflow(self, workflow: Any, expose: bool = True) -> None:
         if workflow.name in self._workflows:
@@ -703,6 +699,9 @@ class Runtime:
     async def stop(self) -> None:
         if not self._started:
             return
+        active_run = _ACTIVE_RUN.get()
+        if active_run is not None and active_run in self._active_runs:
+            raise ComponentLifecycleError("runtime.stop must be called outside an active run")
         while self._active_runs:
             active_tasks = []
             for run in tuple(self._active_runs):

@@ -243,6 +243,20 @@ class RuntimeConfig:
                 raise ConfigurationError(
                     "binding for {} references unknown component {}".format(capability, requirement.provider)
                 )
+            candidates = []
+            for component_name in active_components:
+                component = components[component_name]
+                if requirement.provider is not None and component_name != requirement.provider:
+                    continue
+                for spec in component.capabilities:
+                    if spec.name == capability and (
+                        requirement.version is None or spec.version == requirement.version
+                    ):
+                        candidates.append(component_name)
+            if not candidates:
+                raise ConfigurationError(
+                    "binding for {} does not match an active provider".format(capability)
+                )
         if self.workflow_order or self.parallel_groups or self.branches:
             from .workflow import ConfiguredWorkflow
 

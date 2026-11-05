@@ -11,6 +11,7 @@ from astra import (
     CapabilityRequirement,
     CapabilitySpec,
     CapabilityVersionError,
+    ComponentLifecycleError,
     Event,
     EventBus,
     FunctionComponent,
@@ -199,6 +200,28 @@ class RuntimeTests(unittest.TestCase):
         slow.release.set()
         sink.flush()
         sink.close()
+
+    def test_nonblocking_sink_close_discards_queued_records_before_timeout(self):
+        class PausedSink:
+            def __init__(self):
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            def write(self, record):
+                self.started.set()
+                self.release.wait(1)
+
+        slow = PausedSink()
+        sink = NonBlockingLogSink(slow, maxsize=1)
+        logger = StructuredLogger([sink])
+        logger.emit("info", "queued", "first")
+        self.assertTrue(slow.started.wait(1))
+        logger.emit("info", "queued", "second")
+        sink.close(timeout=0.01)
+        self.assertGreaterEqual(sink.dropped, 1)
+        slow.release.set()
+        sink._worker.join(1)
+        self.assertFalse(sink._worker.is_alive())
 
     def test_workflow_component_can_be_invoked_as_capability(self):
         async def scenario():
@@ -513,6 +536,23 @@ class RuntimeTests(unittest.TestCase):
             await runtime.start()
             with self.assertRaises(asyncio.TimeoutError):
                 await runtime.run_workflow(workflow, None, timeout=0.01)
+            await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_runtime_stop_rejects_calls_from_an_active_run(self):
+        async def scenario():
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+
+            async def stop_from_workflow(context, value):
+                with self.assertRaises(ComponentLifecycleError):
+                    await context.run.runtime.stop()
+                return value
+
+            workflow = CallableWorkflow("stop-from-run", stop_from_workflow)
+            await runtime.start()
+            self.assertEqual(await runtime.run_workflow(workflow, "value", timeout=1), "value")
+            self.assertTrue(runtime.started)
             await runtime.stop()
 
         self.run_async(scenario())

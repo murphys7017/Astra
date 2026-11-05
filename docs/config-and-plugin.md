@@ -18,11 +18,11 @@ RuntimeConfig 接受一个 JSON 对象，当前支持：
 - `resources.max_concurrent_children`：单个 Run 允许同时运行的子 Workflow 上限；
 - `secrets`：密钥引用或受保护的内联密钥。
 
-JSON 只选择当前组合和参数，不定义组件内部行为，也不取代 Python Workflow 的执行语义。Runtime 在启动前校验组件、Workflow、绑定和组合引用，并生成不可变 Composition Snapshot。调用 `runtime.run_composition(...)` 时，`composition.order` 作为串行执行顺序，`composition.parallel` 中的连续成员以同一输入并行执行并按声明顺序汇合，`composition.branches` 作为无条件的单出边跳转。条件路由仍由 Python `RouteWorkflow` 提供，JSON 不因此变成完整 Workflow DSL。
+JSON 只选择当前组合和参数，不定义组件内部行为，也不取代 Python Workflow 的执行语义。Runtime 在启动前校验组件、Workflow、绑定的能力和版本以及组合引用，并生成不可变 Composition Snapshot。调用 `runtime.run_composition(...)` 时，`composition.order` 作为串行执行顺序，`composition.parallel` 中的连续成员以同一输入并行执行并按声明顺序汇合，`composition.branches` 作为无条件的单出边跳转。条件路由仍由 Python `RouteWorkflow` 提供，JSON 不因此变成完整 Workflow DSL。
 
 并行组必须完整出现在 `composition.order` 的连续位置，不能互相重叠；分支图不能有环，也不能从同一个 Workflow 声明多条出边。分支不能从或指向并行组内部成员，只能以并行组的首节点作为跳转点。组合入口会固定当前已注册 Workflow 和 Composition Generation，运行中不会替换其中的成员。
 
-资源配置当前支持 `resources.max_concurrent_children`。它限制同一 Run Scope 下并行子 Workflow 的数量，额度耗尽时新的子 Workflow 等待，Scope 取消会中断等待。EventBus 也支持有限的待处理异步订阅，超过上限的事件处理会被丢弃并记录诊断。
+资源配置当前支持 `resources.max_concurrent_children`。它限制同一 Run Scope 下并行子 Workflow 的数量，额度耗尽时新的子 Workflow 等待，Scope 取消会中断等待。EventBus 对普通异步订阅和事件触发 Workflow 分别设置待处理上限，超过对应上限的事件处理会被丢弃并记录诊断。
 
 最小调用方式如下：
 
@@ -47,6 +47,8 @@ result = await runtime.run_composition(input_value)
 ```
 
 敏感字段不能散落在普通配置、Workflow 参数或权限对象中。配置的诊断输出只保留密钥名称，不保留密钥值。
+
+日志接口对结构化字段按敏感键自动脱敏。组件和插件不得把密钥直接拼入日志消息文本。
 
 ## 离线插件
 

@@ -117,12 +117,17 @@ class NonBlockingLogSink:
                 self._queue.put_nowait(self._sentinel)
                 break
             except queue.Full:
-                if time.monotonic() >= deadline:
-                    return
-                time.sleep(0.001)
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    time.sleep(0)
+                    continue
+                else:
+                    self._queue.task_done()
+                    self.dropped += 1
         self._worker.join(max(0.0, deadline - time.monotonic()))
         close = getattr(self.sink, "close", None)
-        if close is not None:
+        if close is not None and not self._worker.is_alive():
             close()
 
     def _drain(self) -> None:

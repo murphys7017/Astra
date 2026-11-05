@@ -212,6 +212,25 @@ class ConfigAndPluginTests(unittest.TestCase):
 
         self.run_async(scenario())
 
+    def test_capability_bindings_are_validated_against_active_components(self):
+        runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+        runtime.register_component(FunctionComponent("provider", {"echo": lambda request, inv: request}))
+        with self.assertRaises(ConfigurationError):
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {"components": ["provider"], "bindings": {"missing": {"provider": "provider"}}}
+                )
+            )
+        with self.assertRaises(ConfigurationError):
+            runtime.apply_config(
+                RuntimeConfig.from_dict(
+                    {
+                        "components": ["provider"],
+                        "bindings": {"echo": {"provider": "provider", "version": "2"}},
+                    }
+                )
+            )
+
     def test_permission_is_checked_before_provider_execution(self):
         async def scenario():
             called = []

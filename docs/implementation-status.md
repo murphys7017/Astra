@@ -21,7 +21,7 @@
 - 日志 Sink 故障隔离、字段脱敏和长度限制；
 - JSON RuntimeConfig 的结构校验、敏感配置边界和不可变 Composition Snapshot；
 - 可信本地 Plugin Manifest 发现、入口加载、依赖排序和注册事务回滚；
-- JSON 选择启用组件、Workflow 和 Capability Provider Binding。
+- JSON 选择启用组件、Workflow 和 Capability Provider Binding，并在应用前校验能力和版本匹配。
 - JSON composition 可编译为固定的配置 Workflow，支持串行顺序、连续并行组和无条件单出边跳转；
 - 并行 Workflow 的结果汇合；
 - Scope 绑定的内存 EventBus 和事件触发 Workflow；
@@ -49,7 +49,7 @@ python -m tools.benchmark_runtime --iterations 1000
 python -m tools.benchmark_runtime --iterations 1000 --max-overhead-us 150
 ```
 
-当前测试包含 35 个用例，覆盖组件生命周期、Capability 契约归一化、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置与组合执行、资源上限、事件背压、默认拒绝权限、事件订阅、Generation 切换和临时本地插件加载。
+当前测试包含 38 个用例，覆盖组件生命周期、Capability 契约归一化、绑定校验、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置与组合执行、资源上限、事件背压、默认拒绝权限、事件订阅、Generation 切换、停止边界和临时本地插件加载。
 
 ## 明确保留在底座之外的后续能力
 
