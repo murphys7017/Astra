@@ -1,6 +1,6 @@
 # Astra 实现状态
 
-**状态**：最小底座与首轮硬化门槛已完成，可进入真实插件接入阶段
+**状态**：最小底座与首轮硬化门槛已完成，已接入第一条原生消息响应链路
 **日期**：2026-11-06
 
 ## 已实现
@@ -36,6 +36,7 @@
 - 可重复的本地直接调用与 Workflow/Capability 调用性能基线脚本；
 - 非阻塞日志 Sink、事件 payload 冻结和取消/资源释放诊断。
 - EventBus 事件触发 Workflow 的全局待处理上限，以及 NonBlockingLogSink 的有界队列和丢弃计数；
+- `plugins/native/message_response` 第一条原生插件迁移切片，以及通过 PluginLoader、Capability 和 Workflow 的端到端运行入口；
 
 插件回滚当前只覆盖 Runtime 注册表；由于插件在进程内执行，导入或工厂副作用仍要求插件自身保持可控。
 
@@ -51,7 +52,7 @@ python -m tools.benchmark_runtime --iterations 1000
 python -m tools.benchmark_runtime --iterations 1000 --max-overhead-us 150
 ```
 
-当前测试包含 43 个用例，覆盖组件生命周期、Capability 契约归一化、绑定校验、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置与组合执行、资源上限、事件背压、默认拒绝权限、事件订阅、Generation 切换、停止边界、临时本地插件加载、插件配置 Schema、Schema 校验和插件配置热重载边界。
+当前测试包含 44 个用例，覆盖组件生命周期、Capability 契约归一化、绑定校验、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置与组合执行、资源上限、事件背压、默认拒绝权限、事件订阅、Generation 切换、停止边界、临时本地插件加载、插件配置 Schema、Schema 校验、插件配置热重载边界和原生消息响应插件链路。
 
 ## 明确保留在底座之外的后续能力
 
@@ -75,4 +76,4 @@ python -m tools.benchmark_runtime --iterations 1000 --max-overhead-us 150
 - [x] 性能基线提供本地重复测量和显式阈值门禁，消息热路径不执行插件发现和依赖扫描；
 - [x] 上述门槛均有回归测试和文档说明。
 
-底座完成条件已经满足。下一阶段可以接入真实插件，但插件组件热替换和自动适配仍作为独立能力推进。
+底座完成条件已经满足。第一条原生插件链路已经接入，下一阶段继续迁移边界清晰的系统功能。插件组件热替换和自动适配仍作为独立能力推进。
