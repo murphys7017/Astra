@@ -1,37 +1,59 @@
-# 原生插件迁移第一条链路
+# 原生消息链路迁移
 
-本文记录从真实外部模块开始接入 Astra 的第一个最小切片。它用于验证迁移后的模块可以遵循 Astra 的 Plugin、Component、Capability 和 Workflow 边界运行。
+当前迁移目标是一条真实的最小消息闭环：
 
-## 当前切片
+```text
+QQ / OneBot
+    ↓
+QQ Adapter
+    ↓
+Personal Response
+    ↓
+DeepSeek 或 MiniMax Provider
+    ↓
+QQ Adapter
+```
 
-`plugins/native/message_response/` 提供一个原生插件实例。它声明 `message.respond` Capability，接收字符串或包含 `text`、`metadata` 的消息对象，返回规范化的响应对象。
+## 当前插件
 
-当前切片保留了原消息输出清理逻辑中的两个行为：移除隐藏的 `system_reminder` 标记，压缩连续空行。响应前缀通过插件配置传入，插件配置仍然由统一 JSON 入口提供。
+- `plugins/native/qq_adapter/` 负责 OneBot 11 事件解析和 QQ 文本发送，提供 `qq.message.receive` 与 `qq.message.send`；
+- `plugins/native/model_providers/` 提供可配置的 OpenAI 兼容模型 Provider，支持 DeepSeek、MiniMax 或其他兼容端点，提供 `llm.generate`；
+- `plugins/native/personal_response/` 负责系统提示词、历史消息和当前用户消息组织，通过 `llm.generate` 获取模型响应；
+- `tools/run_qq_personal.py` 注册并执行 `qq-personal-response` Workflow。
 
-## 运行链路
+Workflow 的步骤是：
 
-1. `PluginLoader` 从 `plugins/` 递归发现原生插件 Manifest。
-2. Runtime 根据实例配置创建 `native.message-response` Component。
-3. JSON 绑定将 `message.respond` 指向该 Component 的版本 `1` Provider。
-4. 宿主注册一个串行 Workflow，由 Workflow 通过 Capability 发起响应。
-5. Runtime 固定本次 Run 的组合和 Provider Binding，并返回响应结果。
+1. 解析 OneBot 消息事件；
+2. 生成统一消息对象；
+3. Personal 组织模型消息；
+4. 通过当前 Runtime Binding 调用模型 Provider；
+5. 将模型文本交给 QQ 适配器发送。
 
-这条链路没有把插件内部函数名暴露给 Workflow。Workflow 只依赖公开的 Capability，插件内部可以继续替换实现。
+一次 Run 固定这次使用的 Provider Binding。Personal 不绑定 DeepSeek 或 MiniMax 的内部实现，模型选择由 JSON 配置完成。
+
+## 配置边界
+
+模型 API Key 和 QQ Access Token 使用环境变量引用：
+
+```json
+{
+  "api_key": {"ref": "env:DEEPSEEK_API_KEY"},
+  "access_token": {"ref": "env:ASTRA_QQ_ACCESS_TOKEN"}
+}
+```
+
+模型调用需要 `network.llm` 权限，QQ 发送需要 `network.qq` 权限。QQ 适配器支持启动 HTTP 接收入口，接收到的 OneBot 事件可以直接触发配置的 Workflow。
 
 ## 本地验证
 
 ```powershell
-python tools/run_native_message.py "hello <system_reminder>private</system_reminder>"
+python tools/run_qq_personal.py "你好" --dry-run
 ```
 
-预期输出：
+该命令使用真实的 Workflow、Personal 和模型 HTTP 协议。QQ 发送可以使用 `--qq-api-url` 指向 OneBot HTTP API，模型端点可以使用 `--endpoint` 指向 DeepSeek、MiniMax 或本地兼容服务。
 
-```json
-{"text": "Astra: hello", "metadata": {}}
-```
-
-对应的回归测试位于 `tests/test_native_message_plugin.py`。当前 Workflow 在宿主启动脚本中注册，后续若需要由插件直接声明 Workflow，再补充独立的 Workflow 导出契约，不扩大本次迁移切片的底座范围。
+端到端回归测试位于 `tests/test_native_qq_personal_flow.py`。测试通过本地 HTTP 服务验证 OneBot 输入、模型请求和 QQ 发送请求之间的完整数据流。
 
 ## 当前边界
 
-这是一条可运行的原生迁移验证链路，不代表外部项目的全部业务功能已经迁移。下一条迁移应继续选择一个输入、调用或输出边界清晰的系统功能，并保持同样的 Capability 与 Workflow 验证方式。
+这条链路已经覆盖输入适配、Personal 编排、模型 Provider 和输出适配。Personal 的完整行为策略、会话持久化、流式响应和更复杂的 QQ 消息段仍按后续迁移切片逐步加入。

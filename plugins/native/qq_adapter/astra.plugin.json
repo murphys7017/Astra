@@ -1,0 +1,5 @@
+{
+  "id": "native-qq-adapter",
+  "version": "1",
+  "entrypoint": "plugin.py:create_components"
+}

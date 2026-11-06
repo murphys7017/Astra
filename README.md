@@ -4,7 +4,7 @@ Astra 是一个以 Component 和 Capability 为基础的可组合智能系统运
 
 开发者可以自由组织 Workflow。Workflow 可以消费其他组件提供的能力，也可以作为 Component 对外提供能力，并通过显式调用、流式连接、路由决策和事件通知进行协作。
 
-当前仓库已完成**最小底座与首轮硬化**：本地异步 Runtime、Workflow 组合、可信离线插件、JSON 启动配置、插件实例配置 Schema、结构化日志、权限检查、流与事件收束、配置 Generation 排空和性能基线均已有可运行实现和回归验证。下一步可以在稳定契约上接入真实插件。
+当前仓库已完成**最小底座与首轮硬化**，并接入第一条真实消息链路：QQ/OneBot 输入、Personal 编排、DeepSeek 或 MiniMax Provider 和 QQ 输出均通过原生插件与 Workflow 连接。
 
 ## 当前基线
 
@@ -24,7 +24,7 @@ Astra 是一个以 Component 和 Capability 为基础的可组合智能系统运
 - [设计与实现验收表](docs/acceptance.md)：底座边界、首轮实现和后续未完成项的验收状态。
 - [初步开发计划](docs/initial-development-plan.md)：从最小 Runtime、日志基础、插件和 Workflow 到后续适配层的详细阶段计划。
 - [实现状态](docs/implementation-status.md)：当前已实现范围、验证结果和下一步工作。
-- [原生迁移第一条链路](docs/native-migration.md)：第一条原生消息响应插件的运行边界和验证方法。
+- [原生消息链路迁移](docs/native-migration.md)：QQ、Personal 和模型 Provider 的完整迁移链路。
 - [JSON 配置与离线插件](docs/config-and-plugin.md)：启动配置、权限边界和本地插件载入行为。
 - [插件目录](plugins/README.md)：原生插件和外部生态兼容插件的代码布局。
 - [性能基线](docs/performance-baseline.md)：本地 Runtime 路径的可重复测量方法。

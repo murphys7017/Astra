@@ -4,4 +4,4 @@
 
 原生插件可以包含普通 Component、Workflow Component、Capability 和自己的配置 Schema。
 
-当前示例：`message_response/` 提供第一条原生 `message.respond` 消息响应链路。
+当前原生迁移插件包括 `qq_adapter/`、`model_providers/` 和 `personal_response/`，共同组成 QQ → Personal → LLM → QQ 的消息链路。

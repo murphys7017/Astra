@@ -1,0 +1,6 @@
+{
+  "id": "native-personal-response",
+  "version": "1",
+  "entrypoint": "plugin.py:create_components",
+  "components": ["personal.response"]
+}

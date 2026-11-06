@@ -1,0 +1,5 @@
+{
+  "id": "native-model-providers",
+  "version": "1",
+  "entrypoint": "plugin.py:create_components"
+}

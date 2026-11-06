@@ -1,6 +1,0 @@
-{
-  "id": "native-message-response",
-  "version": "1",
-  "entrypoint": "plugin.py:create_components",
-  "components": ["native.message-response"]
-}
