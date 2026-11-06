@@ -1,7 +1,13 @@
 """Astra's minimal, local component runtime."""
 
 from .contracts import CapabilityRequirement, CapabilitySpec, InvocationMode, SideEffect
-from .config import CompositionSnapshot, RuntimeConfig, SecretValue
+from .config import (
+    CompositionSnapshot,
+    PluginConfigSchema,
+    PluginInstanceConfig,
+    RuntimeConfig,
+    SecretValue,
+)
 from .events import Event, EventBus, EventSubscription
 from .errors import (
     AstraError,
@@ -12,6 +18,7 @@ from .errors import (
     ComponentLifecycleError,
     ConfigurationError,
     PluginDependencyError,
+    PluginConfigError,
     PluginError,
     PluginManifestError,
     PermissionDeniedError,
@@ -71,6 +78,9 @@ __all__ = [
     "NonBlockingLogSink",
     "LoadedPlugin",
     "PluginDependencyError",
+    "PluginConfigError",
+    "PluginConfigSchema",
+    "PluginInstanceConfig",
     "PluginError",
     "PluginLoader",
     "PluginManifest",

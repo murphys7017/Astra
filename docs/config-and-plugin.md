@@ -7,7 +7,7 @@
 RuntimeConfig 接受一个 JSON 对象，当前支持：
 
 - `schema_version`：当前必须为 `1`；
-- `plugins`：要载入的本地插件 ID；
+- `plugins`：要载入的本地插件 ID，或带有全局开关和实例配置的对象；
 - `components`：启用的组件名称；省略时使用已注册组件；
 - `workflows`：启用的 Workflow 及其运行参数；
 - `bindings`：Capability 到 Provider 和精确版本的绑定；
@@ -49,6 +49,35 @@ result = await runtime.run_composition(input_value)
 敏感字段不能散落在普通配置、Workflow 参数或权限对象中。配置的诊断输出只保留密钥名称，不保留密钥值。
 
 日志接口对结构化字段按敏感键自动脱敏。组件和插件不得把密钥直接拼入日志消息文本。
+
+## 插件实例配置
+
+插件配置采用统一入口和插件自声明字段的两层结构。旧的插件 ID 数组仍可读取，带配置时使用对象形式：
+
+```json
+{
+  "plugins": {
+    "enabled": true,
+    "config_dir": "./configs",
+    "instances": {
+      "demo": {
+        "enabled": true,
+        "schema_version": 1,
+        "config": {
+          "timeout": 30,
+          "api_key": {"ref": "env:DEMO_KEY"}
+        }
+      }
+    }
+  }
+}
+```
+
+统一层只负责插件总开关、实例启用状态、配置命名空间、版本号和不可变快照。示例中的 `config_dir` 当前作为配置目录元数据保留，不会触发额外文件扫描或合并。插件模块可以提供 `create_config_schema()`，返回自己的默认值、校验器和版本迁移器；提供该 Schema 后，入口工厂接收已经解析的只读配置。没有 Schema 的插件只能使用空配置，配置中出现字段会在载入前失败。
+
+插件拥有自己的字段定义和初始化逻辑，核心不为具体插件增加配置分支。Schema 版本变化必须由插件提供迁移逻辑，校验失败不会注册任何组件。插件配置中的敏感字段只能使用密钥引用对象，Runtime 不在消息热路径解析或记录密钥值。
+
+插件配置在 Runtime 启动前载入并初始化。当前 `reload_config(...)` 只切换已注册组件和 Workflow 的配置 Generation，插件配置、插件组件集合和组件生命周期变更会被拒绝，因此一次运行期间不会发生组件替换。配置编辑器、YAML、导入导出、加密存储和可视化管理属于后续配置插件能力。
 
 ## 离线插件
 

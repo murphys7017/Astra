@@ -14,6 +14,7 @@ from astra import (
     MemoryLogSink,
     PermissionDeniedError,
     PluginLoader,
+    PluginConfigError,
     PluginDependencyError,
     Runtime,
     RuntimeConfig,
@@ -425,6 +426,182 @@ class ConfigAndPluginTests(unittest.TestCase):
                 await runtime.start()
                 self.assertEqual(await runtime.run_workflow("main", "ok"), "plugin:ok")
                 await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_plugin_instance_config_is_namespaced_and_redacted(self):
+        config = RuntimeConfig.from_dict(
+            {
+                "plugins": {
+                    "enabled": True,
+                    "config_dir": "./configs",
+                    "instances": {
+                        "demo": {
+                            "enabled": True,
+                            "schema_version": 1,
+                            "config": {
+                                "timeout": 30,
+                                "api_key": {"ref": "env:DEMO_KEY"},
+                            },
+                        },
+                        "disabled": {"enabled": False, "config": {"mode": "off"}},
+                    },
+                }
+            }
+        )
+        self.assertEqual(config.plugin_refs, ("demo",))
+        self.assertEqual(config.plugin_config_dir, "./configs")
+        self.assertEqual(config.plugin_configs["demo"].values["timeout"], 30)
+        self.assertIn("<redacted>", str(config.redacted()))
+        self.assertNotIn("DEMO_KEY", str(config.redacted()))
+
+    def test_plugin_config_schema_applies_defaults_migration_and_factory_config(self):
+        async def scenario():
+            with TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin_dir = root / "configured"
+                plugin_dir.mkdir()
+                (plugin_dir / "astra.plugin.json").write_text(
+                    json.dumps(
+                        {
+                            "id": "configured",
+                            "version": "1",
+                            "entrypoint": "plugin.py:create_components",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (plugin_dir / "plugin.py").write_text(
+                    "from astra import FunctionComponent, PluginConfigSchema\n"
+                    "def create_config_schema():\n"
+                    "    return PluginConfigSchema(\n"
+                    "        version=2,\n"
+                    "        defaults={'timeout': 30},\n"
+                    "        migrator=lambda version, values: {'timeout': values['old_timeout']},\n"
+                    "    )\n"
+                    "def create_components(config):\n"
+                    "    return [FunctionComponent('configured.provider', {'echo': lambda request, inv: config['timeout']})]\n",
+                    encoding="utf-8",
+                )
+                default_loaded = PluginLoader(root).load_selected(
+                    Runtime(StructuredLogger([MemoryLogSink()])), ["configured"]
+                )
+                self.assertEqual(default_loaded[0].config["timeout"], 30)
+                config = RuntimeConfig.from_dict(
+                    {
+                        "plugins": {
+                            "instances": {
+                                "configured": {
+                                    "schema_version": 1,
+                                    "config": {"old_timeout": 12},
+                                }
+                            }
+                        },
+                        "components": ["configured.provider"],
+                    }
+                )
+                runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+                loaded = PluginLoader(root).load_configured(runtime, config)
+                self.assertEqual(loaded[0].config["timeout"], 12)
+                runtime.apply_config(config)
+                await runtime.start()
+                workflow = SerialWorkflow("main", [lambda context, value: context.invoke("echo", value)])
+                self.assertEqual(await runtime.run_workflow(workflow, "value"), 12)
+                await runtime.stop()
+
+        self.run_async(scenario())
+
+    def test_plugin_config_schema_validation_rejects_invalid_values(self):
+        async def scenario():
+            with TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin_dir = root / "validated"
+                plugin_dir.mkdir()
+                (plugin_dir / "astra.plugin.json").write_text(
+                    json.dumps(
+                        {
+                            "id": "validated",
+                            "version": "1",
+                            "entrypoint": "plugin.py:create_components",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (plugin_dir / "plugin.py").write_text(
+                    "from astra import FunctionComponent, PluginConfigSchema\n"
+                    "def validate(config):\n"
+                    "    if config['timeout'] < 1:\n"
+                    "        raise ValueError('timeout must be positive')\n"
+                    "    return config\n"
+                    "def create_config_schema():\n"
+                    "    return PluginConfigSchema(version=1, validator=validate)\n"
+                    "def create_components(config):\n"
+                    "    return [FunctionComponent('validated.provider', {'echo': lambda request, inv: config['timeout']})]\n",
+                    encoding="utf-8",
+                )
+                config = RuntimeConfig.from_dict(
+                    {
+                        "plugins": {
+                            "instances": {"validated": {"config": {"timeout": 0}}}
+                        }
+                    }
+                )
+                runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+                with self.assertRaises(PluginConfigError):
+                    PluginLoader(root).load_configured(runtime, config)
+                self.assertEqual(runtime._components, {})
+
+        self.run_async(scenario())
+
+    def test_plugin_values_require_a_declared_schema(self):
+        async def scenario():
+            with TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin_dir = root / "plain"
+                plugin_dir.mkdir()
+                (plugin_dir / "astra.plugin.json").write_text(
+                    json.dumps(
+                        {
+                            "id": "plain",
+                            "version": "1",
+                            "entrypoint": "plugin.py:create_components",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (plugin_dir / "plugin.py").write_text(
+                    "from astra import FunctionComponent\n"
+                    "def create_components():\n"
+                    "    return [FunctionComponent('plain.provider', {'echo': lambda request, inv: request})]\n",
+                    encoding="utf-8",
+                )
+                config = RuntimeConfig.from_dict(
+                    {
+                        "plugins": {
+                            "instances": {"plain": {"config": {"unexpected": True}}}
+                        }
+                    }
+                )
+                with self.assertRaises(PluginConfigError):
+                    PluginLoader(root).load_configured(Runtime(StructuredLogger([MemoryLogSink()])), config)
+
+        self.run_async(scenario())
+
+    def test_plugin_config_reload_requires_component_lifecycle_transition(self):
+        async def scenario():
+            runtime = Runtime(StructuredLogger([MemoryLogSink()]))
+            runtime.register_component(FunctionComponent("provider", {"echo": lambda request, inv: request}))
+            initial = RuntimeConfig.from_dict(
+                {"plugins": {"instances": {"demo": {"config": {"timeout": 1}}}}}
+            )
+            runtime.apply_config(initial)
+            await runtime.start()
+            changed = RuntimeConfig.from_dict(
+                {"plugins": {"instances": {"demo": {"config": {"timeout": 2}}}}}
+            )
+            with self.assertRaises(ConfigurationError):
+                runtime.reload_config(changed)
+            await runtime.stop()
 
         self.run_async(scenario())
 

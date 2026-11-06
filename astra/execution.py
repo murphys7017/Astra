@@ -615,6 +615,14 @@ class Runtime:
                 raise ConfigurationError("configuration reload cannot change plugin selection")
             if config.component_names != previous_config.component_names:
                 raise ConfigurationError("configuration reload cannot change component selection")
+            if (
+                config.plugins_enabled != previous_config.plugins_enabled
+                or config.plugin_config_dir != previous_config.plugin_config_dir
+                or config.plugin_configs != previous_config.plugin_configs
+            ):
+                raise ConfigurationError(
+                    "plugin configuration changes require a component lifecycle transition"
+                )
         elif config.plugin_refs or config.component_names is not None:
             raise ConfigurationError("configuration reload cannot add plugin or component selection")
         config.validate_registered(self._components, self._workflows)

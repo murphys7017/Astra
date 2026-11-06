@@ -1,7 +1,7 @@
 # Astra 实现状态
 
 **状态**：最小底座与首轮硬化门槛已完成，可进入真实插件接入阶段
-**日期**：2026-11-05
+**日期**：2026-11-06
 
 ## 已实现
 
@@ -20,6 +20,7 @@
 - 统一结构化日志入口、内存 Sink 和最小备用 Sink；
 - 日志 Sink 故障隔离、字段脱敏和长度限制；
 - JSON RuntimeConfig 的结构校验、敏感配置边界和不可变 Composition Snapshot；
+- 插件实例命名空间、全局启用开关、插件自声明 Schema、默认值、版本迁移和校验；
 - 可信本地 Plugin Manifest 发现、入口加载、依赖排序和注册事务回滚；
 - JSON 选择启用组件、Workflow 和 Capability Provider Binding，并在应用前校验能力和版本匹配。
 - JSON composition 可编译为固定的配置 Workflow，支持串行顺序、连续并行组和无条件单出边跳转；
@@ -49,7 +50,7 @@ python -m tools.benchmark_runtime --iterations 1000
 python -m tools.benchmark_runtime --iterations 1000 --max-overhead-us 150
 ```
 
-当前测试包含 38 个用例，覆盖组件生命周期、Capability 契约归一化、绑定校验、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置与组合执行、资源上限、事件背压、默认拒绝权限、事件订阅、Generation 切换、停止边界和临时本地插件加载。
+当前测试包含 43 个用例，覆盖组件生命周期、Capability 契约归一化、绑定校验、串行/路由/并行/Pipeline/Stream Workflow、子 Workflow、Workflow Component、日志故障隔离、非阻塞日志、敏感字段脱敏、取消/超时收束、JSON 配置与组合执行、资源上限、事件背压、默认拒绝权限、事件订阅、Generation 切换、停止边界、临时本地插件加载、插件配置 Schema、Schema 校验和插件配置热重载边界。
 
 ## 明确保留在底座之外的后续能力
 

@@ -49,5 +49,9 @@ class PluginManifestError(PluginError):
     """A plugin manifest is malformed or inconsistent with its package."""
 
 
+class PluginConfigError(PluginError):
+    """A plugin configuration schema or value is invalid."""
+
+
 class PluginDependencyError(PluginError):
     """A plugin dependency cannot be satisfied locally."""

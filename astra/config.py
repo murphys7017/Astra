@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 from .contracts import CapabilityRequirement
 from .errors import ConfigurationError, SensitiveConfigurationError, WorkflowError
@@ -64,9 +64,82 @@ class SecretValue:
 
 
 @dataclass(frozen=True)
+class PluginConfigSchema:
+    """Plugin-owned defaults and validation for one configuration namespace."""
+
+    version: int = 1
+    defaults: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    validator: Optional[Callable[[Mapping[str, Any]], Mapping[str, Any]]] = None
+    migrator: Optional[Callable[[int, Mapping[str, Any]], Mapping[str, Any]]] = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.version, bool) or not isinstance(self.version, int) or self.version < 1:
+            raise ValueError("plugin config schema version must be a positive integer")
+        if not isinstance(self.defaults, Mapping):
+            raise ValueError("plugin config schema defaults must be a mapping")
+        object.__setattr__(self, "defaults", _freeze(self.defaults))
+
+    def resolve(self, source_version: int, values: Mapping[str, Any]) -> Mapping[str, Any]:
+        if isinstance(source_version, bool) or not isinstance(source_version, int) or source_version < 1:
+            raise ConfigurationError("plugin config schema version must be a positive integer")
+        if not isinstance(values, Mapping):
+            raise ConfigurationError("plugin config values must be an object")
+        resolved = dict(values)
+        if source_version != self.version:
+            if self.migrator is None:
+                raise ConfigurationError(
+                    "plugin config schema version {} requires migration to {}".format(
+                        source_version, self.version
+                    )
+                )
+            try:
+                resolved = dict(self.migrator(source_version, MappingProxyType(resolved)))
+            except Exception as exc:
+                raise ConfigurationError("plugin config migration failed") from exc
+        merged = dict(self.defaults)
+        merged.update(resolved)
+        if self.validator is not None:
+            try:
+                validated = self.validator(MappingProxyType(_freeze(merged)))
+            except Exception as exc:
+                raise ConfigurationError("plugin config validation failed") from exc
+            if not isinstance(validated, Mapping):
+                raise ConfigurationError("plugin config validator must return an object")
+            merged = dict(validated)
+        return MappingProxyType(_freeze(merged))
+
+
+@dataclass(frozen=True)
+class PluginInstanceConfig:
+    """One plugin's enabled state and raw, JSON-compatible configuration."""
+
+    enabled: bool = True
+    schema_version: int = 1
+    values: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("plugin enabled state must be boolean")
+        if (
+            isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
+            or self.schema_version < 1
+        ):
+            raise ValueError("plugin config schema version must be a positive integer")
+        if not isinstance(self.values, Mapping):
+            raise ValueError("plugin config values must be a mapping")
+        object.__setattr__(self, "values", _freeze(self.values))
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     schema_version: int
     plugin_refs: Tuple[str, ...] = ()
+    plugins_enabled: bool = True
+    plugin_config_dir: Optional[str] = None
+    plugin_configs: Mapping[str, PluginInstanceConfig] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     component_names: Optional[Tuple[str, ...]] = None
     workflow_names: Optional[Tuple[str, ...]] = None
     workflow_order: Tuple[str, ...] = ()
@@ -88,7 +161,7 @@ class RuntimeConfig:
         version = data.get("schema_version", 1)
         if isinstance(version, bool) or not isinstance(version, int) or version != 1:
             raise ConfigurationError("schema_version must be 1")
-        plugins = _string_tuple(data.get("plugins", ()), "plugins")
+        plugins, plugins_enabled, plugin_config_dir, plugin_configs = _plugin_config(data.get("plugins", ()))
         components = _optional_string_tuple(data.get("components"), "components")
         _require_unique(plugins, "plugins")
         if components is not None:
@@ -172,6 +245,9 @@ class RuntimeConfig:
         return cls(
             schema_version=version,
             plugin_refs=plugins,
+            plugins_enabled=plugins_enabled,
+            plugin_config_dir=plugin_config_dir,
+            plugin_configs=MappingProxyType(plugin_configs),
             component_names=components,
             workflow_names=workflow_names,
             workflow_order=order,
@@ -199,6 +275,18 @@ class RuntimeConfig:
             {
                 "schema_version": self.schema_version,
                 "plugins": self.plugin_refs,
+                "plugin_settings": {
+                    "enabled": self.plugins_enabled,
+                    "config_dir": self.plugin_config_dir,
+                    "instances": {
+                        name: {
+                            "enabled": item.enabled,
+                            "schema_version": item.schema_version,
+                            "config": _redact_config_value(item.values),
+                        }
+                        for name, item in self.plugin_configs.items()
+                    },
+                },
                 "components": self.component_names,
                 "workflows": self.workflow_names,
                 "workflow_order": self.workflow_order,
@@ -301,6 +389,60 @@ def _string_tuple(value: Any, label: str) -> Tuple[str, ...]:
     return tuple(result)
 
 
+def _plugin_config(
+    value: Any,
+) -> Tuple[Tuple[str, ...], bool, Optional[str], Dict[str, PluginInstanceConfig]]:
+    if isinstance(value, (list, tuple)):
+        return _string_tuple(value, "plugins"), True, None, {}
+    data = _require_mapping(value, "plugins")
+    unknown = set(data) - {"enabled", "config_dir", "instances"}
+    if unknown:
+        raise ConfigurationError("unknown plugin config fields: {}".format(", ".join(sorted(map(str, unknown)))))
+    enabled = data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigurationError("plugins.enabled must be boolean")
+    config_dir = data.get("config_dir")
+    if config_dir is not None and (not isinstance(config_dir, str) or not config_dir.strip()):
+        raise ConfigurationError("plugins.config_dir must be a non-empty string")
+    instances_data = _require_mapping(data.get("instances", {}), "plugins.instances")
+    instances: Dict[str, PluginInstanceConfig] = {}
+    for plugin_id, raw_instance in instances_data.items():
+        if not isinstance(plugin_id, str) or not plugin_id.strip():
+            raise ConfigurationError("plugin instance id must be a non-empty string")
+        item = _require_mapping(raw_instance, "plugins.instances.{}".format(plugin_id))
+        unknown_instance = set(item) - {"enabled", "schema_version", "config"}
+        if unknown_instance:
+            raise ConfigurationError(
+                "unknown plugin instance fields for {}".format(plugin_id)
+            )
+        instance_enabled = item.get("enabled", True)
+        if not isinstance(instance_enabled, bool):
+            raise ConfigurationError("plugins.instances.{}.enabled must be boolean".format(plugin_id))
+        schema_version = item.get("schema_version", 1)
+        if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version < 1:
+            raise ConfigurationError(
+                "plugins.instances.{}.schema_version must be a positive integer".format(plugin_id)
+            )
+        config = _freeze(
+            _require_mapping(item.get("config", {}), "plugins.instances.{}.config".format(plugin_id))
+        )
+        instances[plugin_id] = PluginInstanceConfig(instance_enabled, schema_version, config)
+    refs = tuple(plugin_id for plugin_id, item in instances.items() if enabled and item.enabled)
+    return refs, enabled, config_dir, instances
+
+
+def _redact_config_value(value: Any, key: Optional[str] = None) -> Any:
+    if key is not None and _secret_key(key):
+        return "<redacted>"
+    if isinstance(value, Mapping):
+        return {str(item_key): _redact_config_value(item, str(item_key)) for item_key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_config_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_redact_config_value(item) for item in value]
+    return value
+
+
 def _optional_string_tuple(value: Any, label: str) -> Optional[Tuple[str, ...]]:
     if value is None:
         return None
@@ -392,9 +534,16 @@ def _validate_unscoped_secrets(value: Any, inside_secrets: bool = False, path: T
             if key_text == "secrets" and path:
                 raise SensitiveConfigurationError("secrets is only allowed at the top level")
             if not inside_secrets and key_text != "secrets" and _secret_key(key_text):
-                raise SensitiveConfigurationError(
-                    "sensitive field {} must be placed under protected secrets".format(key_text)
+                is_reference = (
+                    isinstance(item, Mapping)
+                    and set(item) == {"ref"}
+                    and isinstance(item.get("ref"), str)
+                    and bool(item.get("ref").strip())
                 )
+                if not is_reference:
+                    raise SensitiveConfigurationError(
+                        "sensitive field {} must be placed under protected secrets".format(key_text)
+                    )
             _validate_unscoped_secrets(item, inside_secrets or (key_text == "secrets" and not path), path + (key_text,))
     elif isinstance(value, (list, tuple)):
         for item in value:

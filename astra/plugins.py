@@ -1,13 +1,15 @@
 """Trusted, local, in-process plugin discovery and transactional loading."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import importlib.util
 import json
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterable, List, Mapping, Optional, Tuple
 import uuid
 
-from .errors import PluginDependencyError, PluginError, PluginManifestError
+from .config import PluginConfigSchema, PluginInstanceConfig
+from .errors import PluginConfigError, PluginDependencyError, PluginError, PluginManifestError
 from .execution import Component, Runtime
 
 
@@ -45,6 +47,7 @@ class LoadedPlugin:
     manifest: PluginManifest
     path: Path
     components: Tuple[Component, ...]
+    config: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 class PluginLoader:
@@ -71,7 +74,12 @@ class PluginLoader:
             discovered.append((path, manifest))
         return tuple(discovered)
 
-    def load_selected(self, runtime: Runtime, selected: Optional[Iterable[str]] = None) -> Tuple[LoadedPlugin, ...]:
+    def load_selected(
+        self,
+        runtime: Runtime,
+        selected: Optional[Iterable[str]] = None,
+        plugin_configs: Optional[Mapping[str, PluginInstanceConfig]] = None,
+    ) -> Tuple[LoadedPlugin, ...]:
         if runtime.started:
             raise PluginError("plugins must be loaded before runtime start")
         entries = self.discover()
@@ -92,7 +100,11 @@ class PluginLoader:
         try:
             for plugin_id in ordered_ids:
                 path, manifest = by_id[plugin_id]
-                plugin = self._load_one(path, manifest)
+                plugin = self._load_one(
+                    path,
+                    manifest,
+                    None if plugin_configs is None else plugin_configs.get(plugin_id),
+                )
                 for component in plugin.components:
                     runtime.register_component(component)
                     registered_names.append(component.name)
@@ -105,9 +117,16 @@ class PluginLoader:
 
     def load_configured(self, runtime: Runtime, config: Any) -> Tuple[LoadedPlugin, ...]:
         """Load the plugin IDs selected by a RuntimeConfig before startup."""
-        return self.load_selected(runtime, config.plugin_refs)
+        if not config.plugins_enabled:
+            return ()
+        return self.load_selected(runtime, config.plugin_refs, config.plugin_configs)
 
-    def _load_one(self, path: Path, manifest: PluginManifest) -> LoadedPlugin:
+    def _load_one(
+        self,
+        path: Path,
+        manifest: PluginManifest,
+        config: Optional[PluginInstanceConfig] = None,
+    ) -> LoadedPlugin:
         module_name, separator, factory_name = manifest.entrypoint.partition(":")
         if not separator or not module_name or not factory_name:
             raise PluginManifestError("entrypoint must use module.py:factory format")
@@ -126,8 +145,40 @@ class PluginLoader:
         factory = getattr(module, factory_name, None)
         if not callable(factory):
             raise PluginManifestError("plugin factory is not callable")
+        instance_config = config
+        if instance_config is not None and not isinstance(instance_config, PluginInstanceConfig):
+            raise PluginConfigError("plugin configuration must use PluginInstanceConfig")
+        schema_factory = getattr(module, "create_config_schema", None)
+        schema = None
+        if schema_factory is not None:
+            if not callable(schema_factory):
+                raise PluginConfigError("plugin create_config_schema is not callable")
+            try:
+                schema = schema_factory()
+            except Exception as exc:
+                raise PluginConfigError("plugin config schema factory failed") from exc
+            if not isinstance(schema, PluginConfigSchema):
+                raise PluginConfigError("plugin config schema factory returned an invalid value")
+        if schema is None:
+            if instance_config is not None and (
+                instance_config.schema_version != 1 or instance_config.values
+            ):
+                raise PluginConfigError(
+                    "plugin {} declares configuration but no config schema".format(manifest.plugin_id)
+                )
+            resolved_config = MappingProxyType({})
+        else:
+            try:
+                if instance_config is None:
+                    resolved_config = schema.resolve(schema.version, {})
+                else:
+                    resolved_config = schema.resolve(instance_config.schema_version, instance_config.values)
+            except Exception as exc:
+                if isinstance(exc, PluginConfigError):
+                    raise
+                raise PluginConfigError("plugin configuration is invalid") from exc
         try:
-            produced = factory()
+            produced = factory() if schema is None else factory(resolved_config)
         except Exception as exc:
             raise PluginError("plugin factory failed") from exc
         if isinstance(produced, Component):
@@ -144,7 +195,7 @@ class PluginLoader:
             raise PluginManifestError("plugin contains duplicate component names")
         if manifest.declared_components and set(manifest.declared_components) != set(names):
             raise PluginManifestError("manifest components do not match factory output")
-        return LoadedPlugin(manifest, path, components)
+        return LoadedPlugin(manifest, path, components, resolved_config)
 
 
 def _dependency_order(

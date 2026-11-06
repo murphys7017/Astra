@@ -22,7 +22,7 @@ Astra 底座要解决的是“如何安全地组合和运行能力”，而不�
 
 ## 1.1 插件、组件与工作流
 
-Plugin 是组件和工作流的发现、分发与离线载入单位。它不是新的运行时调用原语。
+Plugin 是组件和工作流的发现、分发与离线载入单位。它不是新的运行时调用原语。插件配置通过统一入口进入，但字段和初始化逻辑仍由插件自声明。
 
 一个 Plugin 可以包含：
 
@@ -30,6 +30,8 @@ Plugin 是组件和工作流的发现、分发与离线载入单位。它不是�
 - 一个或多个 Capability；
 - 一个或多个 Workflow；
 - 依赖、配置和权限声明。
+
+插件配置按实例建立独立命名空间。Runtime 只管理启用状态、配置版本和不可变快照，插件 Schema 管理默认值、迁移、校验和工厂初始化。配置在启动时解析，运行期间不替换组件集合。
 
 Component 是 Runtime 的装载和生命周期单位。Workflow 在运行时可以作为 Workflow Component，对外提供 Capability。Workflow Package 可以作为 Plugin 被载入，但 Runtime 最终仍然通过 Component 和 Capability 工作。
 
