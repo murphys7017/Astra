@@ -3,6 +3,9 @@
 | 术语 | 当前定义 | 关键边界 |
 |---|---|---|
 | Component | 可独立装载、提供能力并接受 Runtime 生命周期管理的功能实体 | 不是所有函数都需要成为组件 |
+| Plugin | 组件、Workflow、配置和依赖的离线发现与载入单位 | 通过 Component 和 Capability 接入 Runtime |
+| Plugin Instance Configuration | 某个插件实例的启用状态、配置版本和字段命名空间 | 在 Runtime 启动前解析并固定 |
+| Plugin Config Schema | 插件声明的默认值、版本迁移、校验和初始化输入契约 | 由插件拥有字段语义，Runtime 只负责统一装载 |
 | Capability | 组件之间稳定、可版本化的调用契约 | 不等于具体实现，也不等于模型 Tool Schema |
 | Provider | 当前提供某项 Capability 的 Component | Provider 是角色，不是独立基础类型 |
 | Workflow | 调用和组合其他能力的可执行结构 | 可以作为 Component 对外提供能力 |

@@ -12,7 +12,7 @@ Astra 需要支持插件离线载入、Workflow 作为 Component，以及消息�
 
 1. 每个 Workflow Run 固定自己的 Workflow Definition、Composition Generation 和能力绑定策略。
 2. 每个 Invocation 固定自己的 Provider Binding。
-3. 插件更新、配置变化和 Provider 替换只影响新的 Run。
+3. 已注册组件范围内的配置变化只影响新的 Run；插件选择、插件实例配置和插件组件集合变化需要单独的组件生命周期转换。
 4. 旧 Generation 进入排空状态，等待现有 Run 结束后再停止和释放。
 5. 插件发现、依赖解析、组件启动和 Composition 重组不进入消息热路径。
 6. 同进程调用优先使用已解析的本地绑定，避免重复扫描、重复序列化和隐式事件转发。
@@ -23,7 +23,7 @@ Astra 需要支持插件离线载入、Workflow 作为 Component，以及消息�
 
 一次消息的行为可以复现、追踪和安全收束；配置更新不会破坏运行中的执行；底座的额外开销可以单独测量；外部项目可以在底座稳定后通过适配层接入。
 
-当前实现已落实固定 Run Generation、Provider Binding、配置级 Generation 切换、旧代际排空、启动路径与热路径分离，以及带显式阈值参数的本地性能基线。插件组件热替换和跨环境长期性能样本仍属于后续能力。
+当前实现已落实固定 Run Generation、Provider Binding、配置级 Generation 切换、旧代际排空、插件配置启动期固定、启动路径与热路径分离，以及带显式阈值参数的本地性能基线。插件组件热替换和跨环境长期性能样本仍属于后续能力。
 
 ## 验证
 

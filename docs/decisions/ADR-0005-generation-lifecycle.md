@@ -16,12 +16,14 @@ Astra 需要让一条 Workflow Run 在执行期间使用稳定的配置、Workfl
 2. 新 Run 只绑定当前 Generation。Run、Invocation、Provider Binding 和 Workflow 参数都从绑定的 Generation 读取。
 3. 配置切换先校验并编译新 Generation，成功后才发布为当前 Generation。失败不能改变当前 Generation。
 4. 旧 Generation 进入 retired 状态，等待其 active Run 数量归零后释放快照。
-5. 首轮切换只覆盖已注册 Component 和 Workflow 的配置、绑定与权限变化。插件 Component 的替换和组件生命周期切换另行设计。
-6. Generation 切换不改变已开始 Run 的 Scope、Provider Binding 和资源 Owner。
+5. 首轮切换只覆盖已注册 Component 和 Workflow 的配置、绑定与权限变化。插件选择、插件实例配置、插件 Component 的替换和组件生命周期切换另行设计。
+6. 插件实例配置在启动前由 Schema 解析为只读配置，并传给插件初始化工厂。
+7. `reload_config(...)` 遇到插件开关、插件配置目录或实例配置变化时拒绝发布新 Generation，避免在当前 Runtime 内隐式替换组件。
+8. Generation 切换不改变已开始 Run 的 Scope、Provider Binding 和资源 Owner。
 
 ## 当前实现边界
 
-当前 Runtime 允许在已启动状态下重新加载配置。重新加载只改变已注册组件和 Workflow 的配置、绑定、权限、参数及资源策略，不改变已启动组件集合。每个 Run 保存 Generation 状态引用，旧 Generation 在 active Run 清零后释放。
+当前 Runtime 允许在已启动状态下重新加载配置。重新加载只改变已注册组件和 Workflow 的配置、绑定、权限、参数及资源策略，不改变已启动组件集合。插件配置变化要求重新经历组件生命周期转换，因此不会通过这条路径发布。每个 Run 保存 Generation 状态引用，旧 Generation 在 active Run 清零后释放。
 
 ## 验证要求
 
