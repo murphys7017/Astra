@@ -11,7 +11,7 @@
 | D0-D3 文档、边界和验收基线 | 已完成首轮 | 愿景、边界、术语、设计基线和回归场景已经建立。 |
 | 阶段 1：最小 Kernel 与日志 | 已完成首轮 | Component、Capability、Run、Scope、Invocation、日志和生命周期已实现。 |
 | 阶段 2：JSON 配置和编排输入 | 已完成首轮 | JSON 校验、密钥边界、插件实例配置 Schema、权限、Composition Snapshot 和有限 composition 执行已实现。 |
-| 阶段 3：可信离线插件 | 已完成首轮 | 本地发现、Manifest、依赖版本、插件配置初始化、注册回滚和停止释放已实现。 |
+| 阶段 3：可信离线插件 | 已完成首轮 | 本地发现、Manifest、依赖版本、插件配置初始化、注册回滚和停止释放已实现。插件目录已划分为原生插件和兼容插件两个入口。 |
 | 阶段 4：Workflow Composition | 已完成首轮 | 串行、路由、并行、Pipeline、Stream、EventBus、子 Workflow 和 Workflow Component 已验证。 |
 | 阶段 5：安全与故障收束 | 已完成首轮 | 取消、停止、超时、权限、日志故障、资源清理、外部副作用契约、并行子任务/EventBus/日志队列边界和配置 Generation 排空已验证。 |
 | 阶段 6：性能和稳定性 | 已完成首轮 | 已有可重复的本地基准、显式阈值门禁和全量回归；跨环境长期样本库属于后续运维工作。 |

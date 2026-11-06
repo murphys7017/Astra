@@ -60,12 +60,12 @@ class PluginLoader:
 
     def discover(self) -> Tuple[Tuple[Path, PluginManifest], ...]:
         discovered = []
-        for path in sorted(self.root.iterdir(), key=lambda item: item.name):
-            if not path.is_dir():
-                continue
-            manifest_path = path / MANIFEST_NAME
-            if not manifest_path.is_file():
-                continue
+        manifest_paths = sorted(
+            (path for path in self.root.rglob(MANIFEST_NAME) if path.is_file()),
+            key=lambda item: item.as_posix(),
+        )
+        for manifest_path in manifest_paths:
+            path = manifest_path.parent
             try:
                 raw = json.loads(manifest_path.read_text(encoding="utf-8"))
                 manifest = PluginManifest.from_dict(raw)

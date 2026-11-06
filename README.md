@@ -25,6 +25,7 @@ Astra 是一个以 Component 和 Capability 为基础的可组合智能系统运
 - [初步开发计划](docs/initial-development-plan.md)：从最小 Runtime、日志基础、插件和 Workflow 到后续适配层的详细阶段计划。
 - [实现状态](docs/implementation-status.md)：当前已实现范围、验证结果和下一步工作。
 - [JSON 配置与离线插件](docs/config-and-plugin.md)：启动配置、权限边界和本地插件载入行为。
+- [插件目录](plugins/README.md)：原生插件和外部生态兼容插件的代码布局。
 - [性能基线](docs/performance-baseline.md)：本地 Runtime 路径的可重复测量方法。
 - [核心术语](docs/terms.md)：当前统一词汇及其关系。
 - [文档规划与路线](docs/roadmap.md)：文档阶段、验证阶段和暂缓事项。

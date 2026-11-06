@@ -21,6 +21,7 @@
 - 日志 Sink 故障隔离、字段脱敏和长度限制；
 - JSON RuntimeConfig 的结构校验、敏感配置边界和不可变 Composition Snapshot；
 - 插件实例命名空间、全局启用开关、插件自声明 Schema、默认值、版本迁移和校验；
+- `plugins/` 目录下的原生插件与外部生态兼容插件分类入口，以及递归 Manifest 发现；
 - 可信本地 Plugin Manifest 发现、入口加载、依赖排序和注册事务回滚；
 - JSON 选择启用组件、Workflow 和 Capability Provider Binding，并在应用前校验能力和版本匹配。
 - JSON composition 可编译为固定的配置 Workflow，支持串行顺序、连续并行组和无条件单出边跳转；

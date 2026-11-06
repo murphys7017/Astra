@@ -85,9 +85,10 @@ result = await runtime.run_composition(input_value)
 
 ```text
 plugins/
-└─ echo/
-   ├─ astra.plugin.json
-   └─ plugin.py
+└─ native/
+   └─ echo/
+      ├─ astra.plugin.json
+      └─ plugin.py
 ```
 
 最小 Manifest：
@@ -118,6 +119,6 @@ runtime.apply_config(config)
 await runtime.start()
 ```
 
-这段顺序体现了当前边界：插件负责提供 Component，JSON 负责选择组合，Runtime 负责启动和执行。
+这段顺序体现了当前边界：插件负责提供 Component，JSON 负责选择组合，Runtime 负责启动和执行。原生插件和兼容插件可以放在不同分类目录中，由同一个插件根统一发现。
 
 配置通常在 Runtime 启动前应用。Runtime 启动后可以通过 `reload_config(...)` 校验并发布新的配置 Generation，切换只影响新的 Run，旧 Run 继续使用原代际并在结束后排空。组件集合、插件载入和组件生命周期不在这条配置切换路径中改变。

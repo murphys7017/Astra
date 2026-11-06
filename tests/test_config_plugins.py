@@ -388,8 +388,8 @@ class ConfigAndPluginTests(unittest.TestCase):
         async def scenario():
             with TemporaryDirectory() as directory:
                 root = Path(directory)
-                plugin_dir = root / "demo"
-                plugin_dir.mkdir()
+                plugin_dir = root / "native" / "demo"
+                plugin_dir.mkdir(parents=True)
                 (plugin_dir / "astra.plugin.json").write_text(
                     json.dumps(
                         {
